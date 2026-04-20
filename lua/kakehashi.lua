@@ -35,7 +35,8 @@ function M.inherit_nvim_lsp_config(kakehashi, servers, behavior)
 			local config = get_vim_lsp_config(name)
 			if config and not ignored_servers[name] ~= false then
 				configured_servers[name] = vim.tbl_extend(behavior, configured_servers[name] or {}, {
-					cmd = config.cmd,
+					-- callable cmd cannot be supported. see :h vim.lsp.ClientConfig
+					cmd = type(config.cmd) == "table" and config.cmd or nil,
 					languages = config.filetypes,
 				})
 			end
