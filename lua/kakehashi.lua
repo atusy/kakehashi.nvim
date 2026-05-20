@@ -34,11 +34,14 @@ function M.inherit_nvim_lsp_config(kakehashi, servers, behavior)
 		for _, name in pairs(servers) do
 			local config = get_vim_lsp_config(name)
 			if config and not ignored_servers[name] ~= false then
-				configured_servers[name] = vim.tbl_extend(behavior, configured_servers[name] or {}, {
+				local new_config = vim.tbl_extend(behavior, configured_servers[name] or {}, {
 					-- callable cmd cannot be supported. see :h vim.lsp.ClientConfig
 					cmd = type(config.cmd) == "table" and config.cmd or nil,
 					languages = config.filetypes,
 				})
+				if new_config.cmd then
+					configured_servers[name] = new_config
+				end
 			end
 		end
 		kakehashi:notify("workspace/didChangeConfiguration", {
