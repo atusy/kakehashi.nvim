@@ -18,11 +18,9 @@ function H.fake_client(responses)
 	return client
 end
 
-local buf_count = 0
 function H.scratch_buf(name)
 	local buf = vim.api.nvim_create_buf(false, true)
-	buf_count = buf_count + 1
-	vim.api.nvim_buf_set_name(buf, name or ("/tmp/kakehashi-test-%d.md"):format(buf_count))
+	vim.api.nvim_buf_set_name(buf, name or (vim.fn.tempname() .. ".md"))
 	return buf
 end
 
