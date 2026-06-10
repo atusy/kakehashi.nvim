@@ -1,3 +1,5 @@
+local util = require("kakehashi.lsp.util")
+
 local M = {}
 
 ---A handle to a Tree-sitter node held by the kakehashi language server.
@@ -48,14 +50,7 @@ local M = {}
 local KakehashiNode = {}
 KakehashiNode.__index = KakehashiNode
 
----@param value any
----@return any nil for JSON null (vim.NIL), the value otherwise
-local function denil(value)
-	if value == vim.NIL then
-		return nil
-	end
-	return value
-end
+local denil = util.denil
 
 ---@param info { id: string, kind: string }
 ---@param ctx { client: vim.lsp.Client, bufnr: integer, timeout_ms: integer }
@@ -190,11 +185,7 @@ end
 function M.get(opts)
 	opts = opts or {}
 	local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
-	local client = opts.client
-		or assert(
-			vim.lsp.get_clients({ bufnr = bufnr, name = "kakehashi" })[1],
-			("no kakehashi client attached to buffer %d"):format(bufnr)
-		)
+	local client = opts.client or util.get_client(bufnr)
 	local position = opts.position or vim.lsp.util.make_position_params(0, "utf-16").position
 	local timeout_ms = opts.timeout_ms or 1000
 	local response = client:request_sync("kakehashi/node", {
