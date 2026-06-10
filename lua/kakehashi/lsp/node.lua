@@ -177,27 +177,36 @@ for name, param_names in pairs(node_list_methods) do
 end
 
 ---Resolve the smallest node at a position via `kakehashi/node`.
----@param opts {
----  client: vim.lsp.Client,
+---Defaults: current buffer, the kakehashi client attached to it, and the
+---cursor position of the current window (UTF-16, like every LSP position).
+---@param opts? {
+---  client?: vim.lsp.Client,
 ---  bufnr?: integer,
----  position: lsp.Position,
+---  position?: lsp.Position,
 ---  injection?: boolean | integer,
 ---  timeout_ms?: integer,
 ---}
 ---@return KakehashiNode | nil
 function M.get(opts)
+	opts = opts or {}
 	local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
+	local client = opts.client
+		or assert(
+			vim.lsp.get_clients({ bufnr = bufnr, name = "kakehashi" })[1],
+			("no kakehashi client attached to buffer %d"):format(bufnr)
+		)
+	local position = opts.position or vim.lsp.util.make_position_params(0, "utf-16").position
 	local timeout_ms = opts.timeout_ms or 1000
-	local response = opts.client:request_sync("kakehashi/node", {
+	local response = client:request_sync("kakehashi/node", {
 		textDocument = { uri = vim.uri_from_bufnr(bufnr) },
-		position = opts.position,
+		position = position,
 		injection = opts.injection,
 	}, timeout_ms, bufnr)
 	local info = denil(response and response.result)
 	if not info then
 		return nil
 	end
-	return new_node(info, { client = opts.client, bufnr = bufnr, timeout_ms = timeout_ms })
+	return new_node(info, { client = client, bufnr = bufnr, timeout_ms = timeout_ms })
 end
 
 return M
