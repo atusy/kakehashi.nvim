@@ -46,6 +46,33 @@ for _, match in ipairs(result and result.matches or {}) do
 end
 ```
 
+Live features that re-request on every edit can hand the previous result back
+to receive cheap delta updates — `get()` merges them and always returns a new
+full result (transparently falling back to a full request when the server has
+lost the lineage):
+
+```lua
+local captures = require("kakehashi.lsp.captures")
+local result
+local function refresh()
+  result = captures.get({ kind = "context", previousResult = result })
+end
+```
+
+Pass `range` instead to scope the query to a viewport
+(`kakehashi/captures/range`; range results carry no `resultId`, so they
+cannot seed the delta loop):
+
+```lua
+local visible = captures.get({
+  kind = "context",
+  range = {
+    start = { line = vim.fn.line("w0") - 1, character = 0 },
+    ["end"] = { line = vim.fn.line("w$"), character = 0 },
+  },
+})
+```
+
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
 ```lua
