@@ -171,6 +171,21 @@ for name, param_names in pairs(node_list_methods) do
 	end
 end
 
+---Wrap an already-known NodeInfo (e.g. from kakehashi.lsp.captures) into a
+---KakehashiNode so the `kakehashi/node/*` accessors become available on it.
+---@param info { id: string, kind?: string }
+---@param opts? { client?: vim.lsp.Client, bufnr?: integer, timeout_ms?: integer }
+---@return KakehashiNode
+function M.new(info, opts)
+	opts = opts or {}
+	local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
+	return new_node(info, {
+		client = opts.client or util.get_client(bufnr),
+		bufnr = bufnr,
+		timeout_ms = opts.timeout_ms or 1000,
+	})
+end
+
 ---Resolve the smallest node at a position via `kakehashi/node`.
 ---Defaults: current buffer, the kakehashi client attached to it, and the
 ---cursor position of the current window (UTF-16, like every LSP position).
