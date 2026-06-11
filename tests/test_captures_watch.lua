@@ -145,4 +145,21 @@ T["watch() with the same parameters returns the live autocmd instead of stacking
 	assert(captures.watch(params) ~= autocmd, "a deleted watcher should be recreated")
 end
 
+T["watch() ignores other clients, buffers, statuses, and methods"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local other_client = H.fake_client({})
+	local buf = H.scratch_buf()
+	local semantic_full = "textDocument/semanticTokens/full"
+
+	require("kakehashi.lsp.captures").watch({ client = client, bufnr = buf, kind = "context" })
+	H.fire_lsp_request(other_client, { type = "pending", bufnr = buf, method = semantic_full })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf + 1, method = semantic_full })
+	H.fire_lsp_request(client, { type = "complete", bufnr = buf, method = semantic_full })
+	H.fire_lsp_request(client, { type = "cancel", bufnr = buf, method = semantic_full })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/hover" })
+
+	H.eq({}, client.calls)
+	H.eq({}, other_client.calls)
+end
+
 return T
