@@ -22,13 +22,25 @@ local function result_with(captures)
 end
 
 local function floats()
-	return vim.tbl_filter(function(win)
+	local wins = vim.tbl_filter(function(win)
 		return vim.api.nvim_win_get_config(win).relative ~= ""
 	end, vim.api.nvim_list_wins())
+	table.sort(wins, function(a, b)
+		return vim.api.nvim_win_get_config(a).row < vim.api.nvim_win_get_config(b).row
+	end)
+	return wins
 end
 
-local function float_lines(win)
-	return vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, -1, false)
+---The buffer lines the context stack shows, top to bottom: each float shows
+---the real source buffer scrolled so its header row is the topline.
+local function shown_lines()
+	return vim.tbl_map(function(win)
+		local buf = vim.api.nvim_win_get_buf(win)
+		local top = vim.api.nvim_win_call(win, function()
+			return vim.fn.line("w0")
+		end)
+		return vim.api.nvim_buf_get_lines(buf, top - 1, top, false)[1]
+	end, floats())
 end
 
 ---A 40-line buffer ("L1".."L40") shown in the current window.
@@ -63,7 +75,8 @@ T["context.toggle() floats headers of contexts scrolled off above the window"] =
 	H.eq(true, client.calls[1].params.injection, "context queries may live in injected layers by default")
 	local fs = floats()
 	H.eq(1, #fs)
-	H.eq({ "L1" }, float_lines(fs[1]))
+	H.eq(buf, vim.api.nvim_win_get_buf(fs[1]), "the real buffer, so buffer-attached highlights render natively")
+	H.eq({ "L1" }, shown_lines())
 	local config = vim.api.nvim_win_get_config(fs[1])
 	H.eq("win", config.relative)
 	H.eq(0, config.row)
@@ -90,12 +103,13 @@ T["context.toggle() stacks nested contexts and never covers the cursor line"] = 
 	vim.fn.winrestview({ topline = 6, lnum = 12, col = 0 })
 	H.eq(true, toggle({ client = client, bufnr = buf }))
 	H.fire_lsp_request(client, pending)
-	H.eq({ "L1", "L5" }, float_lines(floats()[1]), "outer context should stack above the inner one")
+	H.eq({ "L1", "L5" }, shown_lines(), "outer context should stack above the inner one")
+	H.eq(2, #floats(), "one single-line float per header")
 
 	-- with the cursor just below the topline there is room for one header only
 	vim.fn.winrestview({ topline = 6, lnum = 7, col = 0 })
 	H.fire_lsp_request(client, pending)
-	H.eq({ "L1" }, float_lines(floats()[1]))
+	H.eq({ "L1" }, shown_lines())
 
 	-- back at the top no header has scrolled off
 	vim.fn.winrestview({ topline = 1, lnum = 3, col = 0 })
@@ -120,7 +134,7 @@ T["context.toggle() accounts for lines its own headers cover"] = function()
 	vim.fn.winrestview({ topline = 6, lnum = 12, col = 0 })
 	H.eq(true, toggle({ client = client, bufnr = buf }))
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
-	H.eq({ "L1", "L6" }, float_lines(floats()[1]))
+	H.eq({ "L1", "L6" }, shown_lines())
 
 	toggle({ client = client, bufnr = buf })
 end
@@ -138,7 +152,7 @@ T["context.toggle() honors max_lines"] = function()
 	vim.fn.winrestview({ topline = 6, lnum = 12, col = 0 })
 	H.eq(true, toggle({ client = client, bufnr = buf, max_lines = 1 }))
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
-	H.eq({ "L1" }, float_lines(floats()[1]), "max_lines should cap the stack at the outermost context")
+	H.eq({ "L1" }, shown_lines(), "max_lines should cap the stack at the outermost context")
 
 	toggle({ client = client, bufnr = buf, max_lines = 1 })
 end

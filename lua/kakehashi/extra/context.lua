@@ -105,7 +105,7 @@ end
 ---@field applier integer User KakehashiCapturesUpdate subscriber
 ---@field autocmds integer[] window-event autocmds driving re-renders
 ---@field latest table<integer, lsp.Range[]> @context ranges per buffer
----@field floats table<integer, { win: integer, buf: integer }> context float per source window
+---@field floats table<integer, integer[]> stacked context floats per source window, outermost first
 
 ---Live states by parameter identity, mirroring extra.conceal: toggling flips
 ---the one applier for those parameters on and off.
@@ -126,14 +126,24 @@ end
 
 ---@param state KakehashiContextState
 ---@param win integer source window
-local function close_float(state, win)
-	local float = state.floats[win]
-	state.floats[win] = nil
-	if float and vim.api.nvim_win_is_valid(float.win) then
-		vim.api.nvim_win_close(float.win, true)
+---@param from? integer close stack entries from this index on (default all)
+local function close_floats(state, win, from)
+	local stack = state.floats[win] or {}
+	for i = #stack, from or 1, -1 do
+		local float = table.remove(stack, i)
+		if vim.api.nvim_win_is_valid(float) then
+			vim.api.nvim_win_close(float, true)
+		end
+	end
+	if not from then
+		state.floats[win] = nil
 	end
 end
 
+---Each header is a single-line float showing the real source buffer,
+---scrolled so the header row is its topline: buffer-attached decorations
+---(kakehashi semantic tokens, conceal extmarks) then render natively,
+---without copying text or highlights into a scratch buffer.
 ---@param state KakehashiContextState
 ---@param win integer source window
 ---@param max_lines? integer
@@ -141,47 +151,53 @@ local function render(state, win, max_lines)
 	local bufnr = vim.api.nvim_win_get_buf(win)
 	local ranges = state.latest[bufnr]
 	if not ranges then
-		return close_float(state, win)
+		return close_floats(state, win)
 	end
 
 	local view = vim.api.nvim_win_call(win, vim.fn.winsaveview)
 	local top_row = view.topline - 1
-	-- the context window must never cover the cursor line
+	-- the context stack must never cover the cursor line
 	local below_cursor = view.lnum - view.topline
 	local rows = context_rows(ranges, top_row, math.min(max_lines or math.huge, below_cursor))
 	if #rows == 0 then
-		return close_float(state, win)
+		return close_floats(state, win)
 	end
 
-	local lines = vim.tbl_map(function(row)
-		return vim.api.nvim_buf_get_lines(bufnr, row, row + 1, false)[1] or ""
-	end, rows)
 	local textoff = vim.fn.getwininfo(win)[1].textoff
-	local win_config = {
-		relative = "win",
-		win = win,
-		row = 0,
-		col = textoff,
-		width = math.max(1, vim.api.nvim_win_get_width(win) - textoff),
-		height = #rows,
-	}
-
-	local float = state.floats[win]
-	if float and vim.api.nvim_win_is_valid(float.win) then
-		vim.api.nvim_win_set_config(float.win, win_config)
-	else
-		local buf = vim.api.nvim_create_buf(false, true)
-		vim.bo[buf].bufhidden = "wipe"
-		win_config.focusable = false
-		win_config.style = "minimal"
-		win_config.noautocmd = true
-		win_config.zindex = 20
-		local float_win = vim.api.nvim_open_win(buf, false, win_config)
-		vim.wo[float_win].winhl = "NormalFloat:KakehashiContext"
-		float = { win = float_win, buf = buf }
-		state.floats[win] = float
+	local stack = state.floats[win] or {}
+	state.floats[win] = stack
+	close_floats(state, win, #rows + 1)
+	for i, row in ipairs(rows) do
+		local win_config = {
+			relative = "win",
+			win = win,
+			row = i - 1,
+			col = textoff,
+			width = math.max(1, vim.api.nvim_win_get_width(win) - textoff),
+			height = 1,
+		}
+		local float = stack[i]
+		if float and vim.api.nvim_win_is_valid(float) then
+			vim.api.nvim_win_set_config(float, win_config)
+			if vim.api.nvim_win_get_buf(float) ~= bufnr then
+				vim.api.nvim_win_set_buf(float, bufnr)
+			end
+		else
+			win_config.focusable = false
+			win_config.style = "minimal"
+			win_config.noautocmd = true
+			win_config.zindex = 20
+			float = vim.api.nvim_open_win(bufnr, false, win_config)
+			vim.wo[float].winhl = "NormalFloat:KakehashiContext"
+			vim.wo[float].wrap = false
+			vim.wo[float].foldenable = false
+			vim.wo[float].scrolloff = 0
+			stack[i] = float
+		end
+		vim.api.nvim_win_call(float, function()
+			vim.fn.winrestview({ topline = row + 1, lnum = row + 1, col = 0, leftcol = 0 })
+		end)
 	end
-	vim.api.nvim_buf_set_lines(float.buf, 0, -1, false, lines)
 end
 
 ---Toggle sticky context headers for the current window, like
@@ -206,7 +222,7 @@ function M.toggle(opts)
 			pcall(vim.api.nvim_del_autocmd, autocmd)
 		end
 		for win in pairs(existing.floats) do
-			close_float(existing, win)
+			close_floats(existing, win)
 		end
 		states[key] = nil
 		return false
@@ -218,7 +234,7 @@ function M.toggle(opts)
 	local function update_current_win()
 		local win = vim.api.nvim_get_current_win()
 		if opts.bufnr and vim.api.nvim_win_get_buf(win) ~= opts.bufnr then
-			return close_float(state, win)
+			return close_floats(state, win)
 		end
 		render(state, win, opts.max_lines)
 	end
@@ -242,12 +258,12 @@ function M.toggle(opts)
 		}),
 		vim.api.nvim_create_autocmd({ "BufLeave", "WinLeave" }, {
 			callback = function()
-				close_float(state, vim.api.nvim_get_current_win())
+				close_floats(state, vim.api.nvim_get_current_win())
 			end,
 		}),
 		vim.api.nvim_create_autocmd("WinClosed", {
 			callback = function(args)
-				close_float(state, tonumber(args.match) --[[@as integer]])
+				close_floats(state, tonumber(args.match) --[[@as integer]])
 			end,
 		}),
 	}

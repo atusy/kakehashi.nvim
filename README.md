@@ -161,12 +161,16 @@ topline into a floating window:
 require("kakehashi.extra.context").toggle() -- all buffers of the attached client
 ```
 
-Headers stack outermost-first, each pinned header is accounted for when
-deciding what the first visible line is, and the float never covers the
-cursor line. Pass `max_lines` to cap the stack and `bufnr` to pin one buffer;
-the float is highlighted with `KakehashiContext` (links to `NormalFloat`).
-Like `conceal.toggle()`, calling it again with the same parameters turns the
-headers off, and the underlying watcher keeps running across toggles.
+Each header is a single-line float showing the real buffer scrolled to the
+header row, so kakehashi's own decorations — semantic token highlights and
+`conceal.toggle()` extmarks — render in the context natively, with no
+text or highlight copying. Headers stack outermost-first, each pinned header
+is accounted for when deciding what the first visible line is, and the stack
+never covers the cursor line. Pass `max_lines` to cap the stack and `bufnr`
+to pin one buffer; the floats are tinted with `KakehashiContext` (links to
+`NormalFloat`). Like `conceal.toggle()`, calling it again with the same
+parameters turns the headers off, and the underlying watcher keeps running
+across toggles.
 
 ### Context-aware 'commentstring' via `kakehashi.extra.commentstring.get()`
 
