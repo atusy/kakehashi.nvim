@@ -176,7 +176,12 @@ function M.watch(opts)
 				return
 			end
 			result = util.denil(result)
-			if result and result.edits ~= nil then
+			if not result then
+				-- lineage lost (stale id, ambiguous mode, or server restart):
+				-- the spec says to call full again
+				return request_full()
+			end
+			if result.edits ~= nil then
 				result = {
 					resultId = result.resultId,
 					matches = apply_edits(previous.matches, result.edits),
