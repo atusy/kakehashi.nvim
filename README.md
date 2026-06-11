@@ -117,26 +117,28 @@ Semantic tokens must be enabled for the kakehashi client
 (`:h vim.lsp.semantic_tokens`, on by default for servers that support them) —
 no tokens requests, no capture updates.
 
-### Conceal without a client-side parser via `kakehashi.extra.conceal()`
+### Conceal without a client-side parser via `kakehashi.extra.conceal.toggle()`
 
 Tree-sitter conceal (e.g. hiding code-span backticks in markdown) normally
 needs a local parser so the highlighter can read `#set! conceal` metadata
 from `highlights.scm`. The kakehashi server runs those same queries, so
-`conceal()` chains a `captures.watch()` on kind `highlights` with a
+`conceal.toggle()` chains a `captures.watch()` on kind `highlights` with a
 `KakehashiCapturesUpdate` subscriber that turns the conceal metadata into
 extmarks — capture-level values win over the match-level `#set!` that covers
 the whole pattern, mirroring `vim.treesitter.highlighter`:
 
 ```lua
-require("kakehashi.extra").conceal() -- all buffers of the attached client
+require("kakehashi.extra").conceal.toggle() -- all buffers of the attached client
 vim.wo.conceallevel = 2 -- conceal only shows once 'conceallevel' is set
 ```
 
 `injection` defaults to `true` because conceal metadata mostly lives in
 injected layers such as `markdown_inline`; pass `bufnr` to pin one buffer.
-Like `watch()`, repeated calls with the same parameters reuse the live
-autocmds; both ids (watcher, applier) are returned so you can delete them to
-stop concealing.
+Calling `toggle()` again with the same parameters (client, buffer, injection)
+turns concealing off and removes its extmarks; it returns `true` when the
+call enabled concealing. The underlying watcher keeps running across toggles —
+watchers are shared by parameters, and a re-enable picks the live result up
+on the next update.
 
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
