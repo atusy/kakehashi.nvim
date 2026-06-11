@@ -130,4 +130,39 @@ function M.get(opts)
 	}
 end
 
+---Keep captures up to date by piggybacking on the editor's semantic tokens
+---requests: whenever a semanticTokens full/delta request goes pending, the
+---document changed, so the matching captures request is sent asynchronously.
+---@param opts { kind: string, client?: vim.lsp.Client, bufnr?: integer, injection?: boolean }
+---@return integer autocmd id watching LspRequest
+function M.watch(opts)
+	assert(opts and opts.kind, "opts.kind is required")
+	local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
+	local client = opts.client or util.get_client(bufnr)
+	local text_document = { uri = vim.uri_from_bufnr(bufnr) }
+
+	local function request_full()
+		client:request("kakehashi/captures/full", {
+			textDocument = text_document,
+			kind = opts.kind,
+			injection = opts.injection,
+		}, function() end, bufnr)
+	end
+
+	return vim.api.nvim_create_autocmd("LspRequest", {
+		callback = function(ev)
+			if ev.data.client_id ~= client.id then
+				return
+			end
+			local request = ev.data.request
+			if request.type ~= "pending" or request.bufnr ~= bufnr then
+				return
+			end
+			if request.method == "textDocument/semanticTokens/full" then
+				request_full()
+			end
+		end,
+	})
+end
+
 return M
