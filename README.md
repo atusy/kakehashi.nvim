@@ -265,6 +265,31 @@ require("Comment").setup({
 })
 ```
 
+### Close `if`/`do`/`def` blocks via `kakehashi.extra.endwise.get()`
+
+What nvim-treesitter-endwise detects with a client-side parse — pressing
+`<CR>` after `if cond then` should also insert `end` — answered by the
+server: `queries/<lang>/endwise.scm` (shipped for lua, vim, bash, fish,
+ruby, elixir, luau) captures openers as `@endwise.cursor`, constructs as
+`@endwise`, parse-error evidence as `@endwise.error`/`@endwise.missing`,
+and states the keyword with `#set! endwise "..."`. `get()` returns the
+closing keyword the construct at the position (default: closest non-blank
+at or before the cursor) still needs, or nil when everything is closed:
+
+```lua
+-- e.g. inside a <CR> mapping or an insx recipe
+local closer = require("kakehashi.extra.endwise").get() -- "end", "fi", "endif", ...
+```
+
+The decision mirrors nvim-treesitter-endwise's heuristics using ranges
+only: a `MISSING` closing token always inserts; matching indentation
+between a construct's first and last lines (or a closer on the cursor row)
+means it plausibly owns its end; an indentation mismatch inserts only when
+the construct is involved in a parse error — tree-sitter error recovery
+loves to hand an outer `end` to the inner statement being typed. `watch()`
+is `captures.watch()` on kind `endwise`, shrinking each `get()` to one
+delta merge — worth enabling, since `<CR>` handlers call `get()` often.
+
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
 ```lua
