@@ -49,6 +49,23 @@ local function apply_edits(matches, edits)
 	return merged
 end
 
+---@param text_document { uri: string }
+---@param kind string
+---@param injection? boolean
+---@return table `kakehashi/captures/full` request params
+local function full_params(text_document, kind, injection)
+	return { textDocument = text_document, kind = kind, injection = injection }
+end
+
+---No injection param here: the lineage (previousResultId) identifies the mode.
+---@param text_document { uri: string }
+---@param kind string
+---@param previous KakehashiCapturesResult
+---@return table `kakehashi/captures/full/delta` request params
+local function delta_params(text_document, kind, previous)
+	return { textDocument = text_document, kind = kind, previousResultId = previous.resultId }
+end
+
 ---Interpret a non-null `kakehashi/captures/full/delta` response: splice the
 ---edits over the previous full result, or pass a full answer through as-is.
 ---@param previous KakehashiCapturesResult
@@ -114,23 +131,14 @@ function M.get(opts)
 	end
 
 	local function request_full()
-		return request("kakehashi/captures/full", {
-			textDocument = text_document,
-			kind = opts.kind,
-			injection = opts.injection,
-		})
+		return request("kakehashi/captures/full", full_params(text_document, opts.kind, opts.injection))
 	end
 
 	if not opts.previousResult then
 		return request_full()
 	end
 
-	-- no injection param: the lineage (previousResultId) identifies the mode
-	local result = request("kakehashi/captures/full/delta", {
-		textDocument = text_document,
-		kind = opts.kind,
-		previousResultId = opts.previousResult.resultId,
-	})
+	local result = request("kakehashi/captures/full/delta", delta_params(text_document, opts.kind, opts.previousResult))
 	if not result then
 		-- lineage lost (stale id, ambiguous mode, or server restart):
 		-- the spec says to call full again
@@ -184,11 +192,8 @@ function M.watch(opts)
 	end
 
 	local function request_full()
-		client:request("kakehashi/captures/full", {
-			textDocument = text_document,
-			kind = opts.kind,
-			injection = opts.injection,
-		}, function(err, result)
+		local params = full_params(text_document, opts.kind, opts.injection)
+		client:request("kakehashi/captures/full", params, function(err, result)
 			if not err then
 				publish(util.denil(result))
 			end
@@ -197,12 +202,8 @@ function M.watch(opts)
 
 	---@param previous KakehashiCapturesResult
 	local function request_delta(previous)
-		-- no injection param: the lineage (previousResultId) identifies the mode
-		client:request("kakehashi/captures/full/delta", {
-			textDocument = text_document,
-			kind = opts.kind,
-			previousResultId = previous.resultId,
-		}, function(err, result)
+		local params = delta_params(text_document, opts.kind, previous)
+		client:request("kakehashi/captures/full/delta", params, function(err, result)
 			if err then
 				return
 			end
