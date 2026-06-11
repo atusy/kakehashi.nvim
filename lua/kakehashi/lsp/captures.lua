@@ -73,7 +73,9 @@ end
 ---@return KakehashiCapturesResult
 local function resolve_delta(previous, result)
 	if result.edits == nil then
-		return result -- the server answered with a full result already
+		-- the server answered with a full result already
+		---@cast result KakehashiCapturesResult
+		return result
 	end
 	return {
 		resultId = result.resultId,
@@ -193,6 +195,7 @@ function M.watch(opts)
 
 	local function request_full()
 		local params = full_params(text_document, opts.kind, opts.injection)
+		---@diagnostic disable-next-line: param-type-mismatch
 		client:request("kakehashi/captures/full", params, function(err, result)
 			if not err then
 				publish(util.denil(result))
@@ -203,6 +206,7 @@ function M.watch(opts)
 	---@param previous KakehashiCapturesResult
 	local function request_delta(previous)
 		local params = delta_params(text_document, opts.kind, previous)
+		---@diagnostic disable-next-line: param-type-mismatch
 		client:request("kakehashi/captures/full/delta", params, function(err, result)
 			if err then
 				return
