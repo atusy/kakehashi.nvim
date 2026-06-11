@@ -87,4 +87,80 @@ function M.get(opts)
 	return resolve(result, range)
 end
 
+---Live watchers by parameter identity, mirroring captures.watch(): repeated
+---watch() calls with the same parameters share one autocmd.
+---@type table<string, integer>
+local watchers = {}
+
+---@param autocmd integer
+---@return boolean whether the autocmd has not been deleted
+local function watcher_alive(autocmd)
+	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "CursorMoved" })) do
+		if au.id == autocmd then
+			return true
+		end
+	end
+	return false
+end
+
+---Keep the buffer-local 'commentstring' in sync with the cursor context:
+---cursor movement and buffer entry asynchronously run get()'s request at the
+---cursor and apply the answer, so :h commenting and plugins reading the
+---option pick the contextual value up. Outside every capture the option
+---returns to what it was before the watcher first touched the buffer.
+---Unlike get(), a nil bufnr does not mean the current buffer: the watcher
+---then follows every buffer the client is attached to. Delete the autocmd
+---with vim.api.nvim_del_autocmd() to stop watching.
+---@param opts? { client?: vim.lsp.Client, bufnr?: integer, injection?: boolean } injection defaults to true
+---@return integer autocmd id watching cursor and buffer events
+function M.watch(opts)
+	opts = opts or {}
+	local injection = opts.injection ~= false
+	local client = opts.client or util.get_client(opts.bufnr or vim.api.nvim_get_current_buf())
+
+	local key = ("%d/%s/%s"):format(client.id, opts.bufnr or "*", tostring(injection))
+	local existing = watchers[key]
+	if existing and watcher_alive(existing) then
+		return existing
+	end
+
+	---@type table<integer, string> 'commentstring' before the watcher first touched the buffer
+	local originals = {}
+
+	local function update()
+		local bufnr = vim.api.nvim_get_current_buf()
+		if opts.bufnr then
+			if bufnr ~= opts.bufnr then
+				return
+			end
+		elseif not (client.attached_buffers and client.attached_buffers[bufnr]) then
+			return
+		end
+		local range = cursor_range(client.offset_encoding or "utf-16")
+		local params = {
+			textDocument = { uri = vim.uri_from_bufnr(bufnr) },
+			kind = "commentstring",
+			range = range,
+			injection = injection,
+		}
+		---@diagnostic disable-next-line: param-type-mismatch
+		client:request("kakehashi/captures/range", params, function(err, result)
+			if err or not vim.api.nvim_buf_is_valid(bufnr) then
+				return
+			end
+			if originals[bufnr] == nil then
+				originals[bufnr] = vim.bo[bufnr].commentstring
+			end
+			vim.bo[bufnr].commentstring = resolve(util.denil(result), range) or originals[bufnr]
+		end, bufnr)
+	end
+
+	local autocmd = vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "BufEnter" }, {
+		callback = update,
+	})
+	watchers[key] = autocmd
+	update()
+	return autocmd
+end
+
 return M
