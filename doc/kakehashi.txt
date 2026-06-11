@@ -1,0 +1,361 @@
+*kakehashi.txt*    Neovim companion for the kakehashi language server
+
+Author: atusy
+License: MIT
+
+==============================================================================
+CONTENTS                                                    *kakehashi-contents*
+
+  1. Introduction ........................... |kakehashi-introduction|
+  2. Setup .................................. |kakehashi-setup|
+  3. Queries on the server .................. |kakehashi-queries|
+  4. Captures ............................... |kakehashi-captures|
+  5. Nodes .................................. |kakehashi-node|
+  6. Conceal ................................ |kakehashi-conceal|
+  7. Context ................................ |kakehashi-context|
+  8. Commentstring .......................... |kakehashi-commentstring|
+  9. Endwise ................................ |kakehashi-endwise|
+
+==============================================================================
+1. INTRODUCTION                                         *kakehashi-introduction*
+
+kakehashi.nvim enhances Neovim with the kakehashi language server
+(https://github.com/atusy/kakehashi): the server parses documents with
+tree-sitter and answers LSP requests, so the features below work without
+installing tree-sitter parsers on the client.
+
+- |kakehashi-conceal|        conceal driven by highlights queries
+- |kakehashi-context|        sticky context headers, like
+                             nvim-treesitter-context
+- |kakehashi-commentstring|  context-aware 'commentstring', like
+                             nvim-ts-context-commentstring
+- |kakehashi-endwise|        closing keyword insertion, like
+                             nvim-treesitter-endwise
+- |kakehashi-captures|       run any tree-sitter query kind yourself
+- |kakehashi-node|           inspect and navigate syntax nodes
+
+Most features are driven by the client's semantic tokens requests. Semantic
+tokens must stay enabled for the kakehashi client (|vim.lsp.semantic_tokens|,
+on by default) — without them, watched captures never update.
+
+==============================================================================
+2. SETUP                                                       *kakehashi-setup*
+
+                                          *kakehashi.inherit_nvim_lsp_config()*
+require("kakehashi").inherit_nvim_lsp_config({client}, {servers}, {behavior})
+
+    Configure the language servers kakehashi bridges by inheriting your
+    |vim.lsp.config| definitions, so a server you already set up for Neovim
+    is also available through kakehashi without duplicating its command and
+    languages.
+
+    Parameters:
+      {client}    (vim.lsp.Client) the kakehashi client
+      {servers}   (string[]) server names to inherit
+      {behavior}  (string or function, optional) conflict resolution against
+                  the server's own configuration: "keep" (default), "error",
+                  "force", or a function as in |vim.tbl_extend()|
+
+    Example: >lua
+      vim.api.nvim_create_autocmd("LspAttach", {
+        callback = function(ev)
+          local client = vim.lsp.get_client_by_id(ev.data.client_id)
+          if client and client.name == "kakehashi" then
+            require("kakehashi").inherit_nvim_lsp_config(
+              client,
+              vim.tbl_keys(vim.lsp._enabled_configs),
+              "keep"
+            )
+          end
+        end,
+      })
+<
+==============================================================================
+3. QUERIES ON THE SERVER                                     *kakehashi-queries*
+
+The features below are driven by tree-sitter queries the server runs:
+`queries/<lang>/<kind>.scm` resolved from the server's `searchPaths`. Add
+this plugin's directory to `searchPaths` in the server configuration to use
+the bundled queries: >
+
+  searchPaths = ["/path/to/kakehashi.nvim", ...]
+<
+Bundled query kinds:
+
+- `commentstring.scm` for |kakehashi-commentstring|
+- `endwise.scm` for |kakehashi-endwise|
+
+Not bundled:
+
+- `context.scm` for |kakehashi-context|: provide your own — for example, add
+  nvim-treesitter-context's plugin directory to `searchPaths`; its
+  `@context` capture conventions are followed.
+
+Override or extend any query by shadowing the file in an earlier
+`searchPaths` entry.
+
+==============================================================================
+4. CAPTURES                                                 *kakehashi-captures*
+
+                                              *kakehashi.lsp.captures.get()*
+require("kakehashi.lsp.captures").get({opts})
+
+    Run the per-language `queries/<lang>/<kind>.scm` query over the document
+    and return the matches, or nil when no language has the query.
+
+    Fields of {opts}:
+      {kind}            (string, required) query kind, e.g. "context"
+      {client}          (vim.lsp.Client?) defaults to the attached kakehashi
+                        client
+      {bufnr}           (integer?) defaults to the current buffer
+      {injection}       (boolean?) include injected language layers
+      {range}           (lsp.Range?) scope the query to a viewport; the
+                        result then carries no resultId
+      {previousResult}  (KakehashiCapturesResult?) hand the previous result
+                        back to receive a cheap incremental update; the
+                        returned result is always a merged full result
+      {timeout_ms}      (integer?) default 1000
+
+    Returns a result with `matches` (each with `language`, `patternIndex`,
+    `captures`, and `#set!` metadata) and `skipped` (languages whose query
+    failed to load, with reasons). Each capture has a `name`, a `range`, the
+    `#set!` metadata, and a `node` usable with |kakehashi.lsp.node.new()|.
+
+    Example: >lua
+      local result = require("kakehashi.lsp.captures").get({
+        kind = "context",
+        injection = true,
+      })
+      for _, match in ipairs(result and result.matches or {}) do
+        for _, capture in ipairs(match.captures) do
+          print(match.language, capture.name)
+        end
+      end
+<
+                                            *kakehashi.lsp.captures.watch()*
+require("kakehashi.lsp.captures").watch({opts})
+
+    Keep captures of a query kind up to date: whenever the document changes,
+    fresh results are fetched asynchronously and published as a
+    |KakehashiCapturesUpdate| event. New watchers publish an initial result
+    for the buffers they can already see.
+
+    Fields of {opts}: {kind} (required), {client}, {bufnr}, {injection} as
+    in |kakehashi.lsp.captures.get()|. Unlike get(), a nil {bufnr} does not
+    mean the current buffer: the watcher then follows every buffer the
+    client serves.
+
+    Returns the watching |autocmd| id. Repeated calls with the same
+    parameters (client, buffer, kind, injection) reuse the live watcher and
+    republish its current results, so calling it from repeated setup paths
+    is safe. Delete the autocmd with |vim.api.nvim_del_autocmd()| to stop.
+
+    A watched buffer also makes |kakehashi.lsp.captures.get()| cheaper:
+    synchronous calls for the same target are answered incrementally.
+
+                                                     *KakehashiCapturesUpdate*
+The |User| autocmd pattern fired on every captures update: >lua
+
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "KakehashiCapturesUpdate",
+    callback = function(ev)
+      -- ev.data.kind       query kind
+      -- ev.data.injection  the watcher's injection flag
+      -- ev.data.bufnr      buffer the result belongs to
+      -- ev.data.result     full result, or nil when no language
+      --                    has the query
+    end,
+  })
+<
+==============================================================================
+5. NODES                                                        *kakehashi-node*
+
+                                                  *kakehashi.lsp.node.get()*
+require("kakehashi.lsp.node").get({opts})
+
+    Resolve the syntax node at a position and return a KakehashiNode, whose
+    methods mirror the `kakehashi/node/*` LSP methods one-for-one.
+
+    Fields of {opts}: {client}, {bufnr}, {position} (defaults to the
+    cursor), {injection}.
+
+    Example: >lua
+      local node = require("kakehashi.lsp.node").get({ injection = true })
+      if node then
+        print(node:kind(), node:text())
+        local parent = node:parent()
+        local body = node:childByFieldName("body")
+        for _, child in ipairs(node:namedChildren() or {}) do
+          print(child:toSexp())
+        end
+      end
+<
+    Every method returns nil when the node id is no longer resolvable (for
+    example after an edit destroyed the node); re-acquire it with get().
+
+                                                  *kakehashi.lsp.node.new()*
+require("kakehashi.lsp.node").new({info})
+
+    Wrap a node reference obtained elsewhere — typically `capture.node` from
+    |kakehashi.lsp.captures.get()| — into a KakehashiNode.
+
+==============================================================================
+6. CONCEAL                                                   *kakehashi-conceal*
+
+                                            *kakehashi.extra.conceal.toggle()*
+require("kakehashi.extra.conceal").toggle({opts})
+
+    Toggle concealing text the way the server's highlights queries direct
+    (`#set! conceal` metadata in `highlights.scm`) — e.g. hiding code-span
+    backticks in markdown — without a client-side parser. Returns true when
+    the call enabled concealing, false when it disabled it.
+
+    Fields of {opts}:
+      {client}     (vim.lsp.Client?)
+      {bufnr}      (integer?) pin one buffer; nil follows every buffer the
+                   client serves
+      {injection}  (boolean?) default true: conceal metadata mostly lives in
+                   injected layers such as markdown_inline
+
+    Conceal only shows once 'conceallevel' is set: >lua
+      require("kakehashi.extra.conceal").toggle()
+      vim.wo.conceallevel = 2
+<
+    Calling toggle() again with the same parameters turns concealing off and
+    removes its extmarks.
+
+==============================================================================
+7. CONTEXT                                                   *kakehashi-context*
+
+                                            *kakehashi.extra.context.toggle()*
+require("kakehashi.extra.context").toggle({opts})
+
+    Toggle sticky context headers: the headers of the constructs containing
+    the first visible line (functions, classes, sections, ...) stay pinned
+    at the top of the window, like nvim-treesitter-context. Requires
+    `context.scm` queries on the server's `searchPaths`
+    (|kakehashi-queries|). Returns true when the call enabled the headers.
+
+    Fields of {opts}:
+      {client}     (vim.lsp.Client?)
+      {bufnr}      (integer?) pin one buffer; nil follows every buffer
+      {injection}  (boolean?) default true
+      {max_lines}  (integer?) cap the header stack; it also never covers the
+                   cursor line
+
+    Headers show the real buffer, so semantic token highlights and conceal
+    extmarks render in them natively. The floats are tinted with the
+    *hl-KakehashiContext* highlight group (links to |hl-NormalFloat|).
+
+==============================================================================
+8. COMMENTSTRING                                       *kakehashi-commentstring*
+
+                                       *kakehashi.extra.commentstring.get()*
+require("kakehashi.extra.commentstring").get({opts})
+
+    The context-aware 'commentstring' for a range — `-- %s` inside a lua
+    block of a markdown file, `{/* %s */}` inside JSX — like
+    nvim-ts-context-commentstring, decided by the server's
+    `commentstring.scm` queries (bundled for 120+ languages,
+    |kakehashi-queries|). Returns nil when nothing covers the range; keep
+    your own fallback.
+
+    Fields of {opts}:
+      {range}       (lsp.Range?) the lines about to be commented; defaults
+                    to the cursor position. Pass the whole selection: a
+                    selection spanning out of a JSX element resolves to the
+                    surrounding javascript context instead
+      {client}      (vim.lsp.Client?)
+      {bufnr}       (integer?)
+      {injection}   (boolean?) default true
+      {timeout_ms}  (integer?)
+
+    Example: >lua
+      local commentstring = require("kakehashi.extra.commentstring")
+      vim.bo.commentstring = commentstring.get() or vim.bo.commentstring
+<
+                                     *kakehashi.extra.commentstring.watch()*
+require("kakehashi.extra.commentstring").watch({opts})
+
+    Make get() cheap and incremental — recommended when get() runs in hot
+    paths such as commenting plugin hooks. Accepts {client}, {bufnr},
+    {injection}; returns the |kakehashi.lsp.captures.watch()| autocmd id.
+    The 'commentstring' option is never touched; applying the value stays
+    your business. >lua
+
+      require("kakehashi.extra.commentstring").watch()
+<
+                                              *kakehashi-commentstring-comment*
+Comment.nvim recipe ~
+
+A pre_hook for Comment.nvim (https://github.com/numToStr/Comment.nvim)
+replacing nvim-ts-context-commentstring. Comment.nvim only falls back to
+|vim.treesitter| (a client-side parse) when the pre_hook returns nil, so a
+total hook — kakehashi first, then Comment.nvim's filetype table, then
+'commentstring' — keeps commenting entirely server-driven: >lua
+
+  require("Comment").setup({
+    mappings = false,
+    pre_hook = function(ctx)
+      local blockwise = ctx.ctype == require("Comment.utils").ctype.blockwise
+      local ok, commentstring = pcall(function()
+        local bufnr = vim.api.nvim_get_current_buf()
+        -- consult the commented rows, excluding indentation and trailing
+        -- blanks, so the range stays inside the capture holding the code
+        local first = vim.api.nvim_buf_get_lines(bufnr, ctx.range.srow - 1, ctx.range.srow, false)[1] or ""
+        local last = ctx.range.srow == ctx.range.erow and first
+          or vim.api.nvim_buf_get_lines(bufnr, ctx.range.erow - 1, ctx.range.erow, false)[1]
+          or ""
+        return require("kakehashi.extra.commentstring").get({
+          bufnr = bufnr,
+          range = {
+            start = { line = ctx.range.srow - 1, character = (first:find("%S") or 1) - 1 },
+            ["end"] = {
+              line = ctx.range.erow - 1,
+              character = vim.str_utfindex(last, "utf-16", #(last:gsub("%s+$", "")), false),
+            },
+          },
+        })
+      end)
+      -- blockwise needs a closing side ("{/* %s */}" has one, "-- %s" not)
+      if ok and commentstring and (not blockwise or commentstring:find("%%s%s*%S")) then
+        return commentstring
+      end
+      -- the fallbacks live here in the hook: ft.get is a plain table lookup
+      return require("Comment.ft").get(vim.bo.filetype, ctx.ctype)
+        or (not blockwise and vim.bo.commentstring)
+        or error(vim.bo.filetype .. " doesn't support block comments!")
+    end,
+  })
+<
+==============================================================================
+9. ENDWISE                                                   *kakehashi-endwise*
+
+                                             *kakehashi.extra.endwise.get()*
+require("kakehashi.extra.endwise").get({opts})
+
+    The closing keyword (`end`, `fi`, `endif`, ...) the construct at the
+    position still needs, or nil when everything is closed.
+    The support can be extended by providing your own `endwise.scm` queries.
+    |kakehashi-queries|).
+
+    Fields of {opts}:
+      {position}    (lsp.Position?) defaults to the closest non-blank at or
+                    before the cursor
+      {client}      (vim.lsp.Client?)
+      {bufnr}       (integer?)
+      {injection}   (boolean?) default true
+      {timeout_ms}  (integer?)
+
+    Example, inside a <CR> mapping or an insx recipe: >lua
+      local closer = require("kakehashi.extra.endwise").get()
+      -- "end", "fi", "endif", ... or nil
+<
+                                           *kakehashi.extra.endwise.watch()*
+require("kakehashi.extra.endwise").watch({opts})
+
+    Make get() cheap and incremental — worth enabling, since <CR> handlers
+    call get() often. Accepts {client}, {bufnr}, {injection}; returns the
+    |kakehashi.lsp.captures.watch()| autocmd id.
+
+vim:tw=78:ts=8:noet:ft=help:norl:
