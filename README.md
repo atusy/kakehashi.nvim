@@ -161,6 +161,41 @@ the float is highlighted with `KakehashiContext` (links to `NormalFloat`).
 Like `conceal.toggle()`, calling it again with the same parameters turns the
 headers off, and the underlying watcher keeps running across toggles.
 
+### Context-aware 'commentstring' via `kakehashi.extra.commentstring.get()`
+
+What nvim-ts-context-commentstring derives from a client-side parse — `-- %s`
+inside a lua block of a markdown file, `{/* %s */}` inside JSX — decided by
+the server instead. This plugin ships `queries/<lang>/commentstring.scm`
+(lua, vim, markdown, html, css, javascript, typescript, tsx, python, bash,
+yaml, query) where each pattern captures the nodes a commentstring applies to
+and states the value with `#set! commentstring "..."`; put the plugin
+directory on the server's `searchPaths` and extend or override per language
+by shadowing the file in an earlier path.
+
+`get()` synchronously asks `kakehashi/captures/range` for the given range and
+returns the commentstring of the innermost capture containing it (capture
+metadata wins over match-level `#set!`), or `nil` when nothing covers the
+range — keep your own fallback:
+
+```lua
+local commentstring = require("kakehashi.extra.commentstring")
+
+-- at the cursor (the default range)
+vim.bo.commentstring = commentstring.get() or vim.bo.commentstring
+
+-- for the lines about to be commented, e.g. a visual selection
+local cs = commentstring.get({
+  range = {
+    start = { line = vim.fn.line("v") - 1, character = 0 },
+    ["end"] = { line = vim.fn.line("."), character = 0 },
+  },
+})
+```
+
+Passing the whole selection matters: a selection spanning out of a JSX
+element into the surrounding function is not contained by the `jsx_element`
+capture, so the javascript `// %s` wins instead.
+
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
 ```lua
