@@ -28,4 +28,28 @@ T["watch() requests captures/full when semanticTokens/full goes pending"] = func
 	H.eq(buf, client.calls[1].bufnr)
 end
 
+T["watch() emits KakehashiCapturesUpdate with the fresh captures as data"] = function()
+	local result = full_result("r1")
+	local client = H.fake_client({ ["kakehashi/captures/full"] = result })
+	local buf = H.scratch_buf()
+	local events = {}
+	local subscription = vim.api.nvim_create_autocmd("User", {
+		pattern = "KakehashiCapturesUpdate",
+		callback = function(ev)
+			table.insert(events, ev.data)
+		end,
+	})
+
+	require("kakehashi.lsp.captures").watch({
+		client = client,
+		bufnr = buf,
+		kind = "context",
+		injection = true,
+	})
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+	vim.api.nvim_del_autocmd(subscription)
+
+	H.eq({ { kind = "context", injection = true, bufnr = buf, result = result } }, events)
+end
+
 return T

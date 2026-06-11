@@ -141,12 +141,23 @@ function M.watch(opts)
 	local client = opts.client or util.get_client(bufnr)
 	local text_document = { uri = vim.uri_from_bufnr(bufnr) }
 
+	local function publish(result)
+		vim.api.nvim_exec_autocmds("User", {
+			pattern = "KakehashiCapturesUpdate",
+			data = { kind = opts.kind, injection = opts.injection, bufnr = bufnr, result = result },
+		})
+	end
+
 	local function request_full()
 		client:request("kakehashi/captures/full", {
 			textDocument = text_document,
 			kind = opts.kind,
 			injection = opts.injection,
-		}, function() end, bufnr)
+		}, function(err, result)
+			if not err then
+				publish(util.denil(result))
+			end
+		end, bufnr)
 	end
 
 	return vim.api.nvim_create_autocmd("LspRequest", {
