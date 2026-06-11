@@ -172,10 +172,10 @@ and states the value with `#set! commentstring "..."`; put the plugin
 directory on the server's `searchPaths` and extend or override per language
 by shadowing the file in an earlier path.
 
-`get()` synchronously asks `kakehashi/captures/range` for the given range and
-returns the commentstring of the innermost capture containing it (capture
-metadata wins over match-level `#set!`), or `nil` when nothing covers the
-range — keep your own fallback:
+`get()` synchronously runs the query (`kakehashi/captures/full`) and returns
+the commentstring of the innermost capture containing the given range
+(capture metadata wins over match-level `#set!`), or `nil` when nothing
+covers the range — keep your own fallback:
 
 ```lua
 local commentstring = require("kakehashi.extra.commentstring")
@@ -196,24 +196,18 @@ Passing the whole selection matters: a selection spanning out of a JSX
 element into the surrounding function is not contained by the `jsx_element`
 capture, so the javascript `// %s` wins instead.
 
-`watch()` makes `get()` answer instantly: it chains a `captures.watch()` on
-kind `commentstring` (full results kept fresh by cheap deltas piggybacking on
-semantic tokens) and `get()` then resolves any range from the watched result
-in memory — no request at all, which makes it safe to call in hot paths like
-an `'operatorfunc'` or a commenting plugin hook. It never touches the
-'commentstring' option; applying the value stays your business. Freshness
-rides on the semantic tokens cadence, so an answer immediately after an edit
-may lag one update behind.
+`watch()` makes `get()` cheap: it is exactly a `captures.watch()` on kind
+`commentstring`, and `get()` cooperates with that watcher — each call shrinks
+to a `full/delta` request merged over the watcher's in-memory result instead
+of a full traversal, and always reflects the current document. It never
+touches the 'commentstring' option; applying the value stays your business.
 
 ```lua
 require("kakehashi.extra.commentstring").watch()
 ```
 
-Like `captures.watch()`, a nil `bufnr` follows every buffer the client
-serves, repeated calls with the same parameters (client, buffer, injection)
-reuse the live subscriber, and `vim.api.nvim_del_autocmd()` stops it (the
-shared captures watcher keeps running). Buffers the watcher has not heard
-about yet transparently fall back to the synchronous range request.
+The returned autocmd id, the all-buffer default, and the
+reuse-by-parameters semantics are `captures.watch()`'s own.
 
 For [Comment.nvim](https://github.com/numToStr/Comment.nvim), wire it up as
 a `pre_hook` and drop nvim-ts-context-commentstring:

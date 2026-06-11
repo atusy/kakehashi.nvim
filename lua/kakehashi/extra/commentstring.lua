@@ -56,19 +56,18 @@ local function resolve(result, range)
 	return best
 end
 
-local find_watcher
-
 ---Context-aware 'commentstring' the way nvim-ts-context-commentstring
 ---computes it, but decided by `queries/<lang>/commentstring.scm` on the
 ---kakehashi server (this plugin ships a starter set under queries/; put the
 ---plugin directory on the server's searchPaths): each query captures the
 ---nodes a commentstring applies to and states the value with
----`#set! commentstring "..."`. The range narrows the decision — pass the
----selection about to be commented; it defaults to the cursor position.
+---`#set! commentstring "..."`. The range narrows the decision client-side —
+---pass the selection about to be commented; it defaults to the cursor
+---position.
 ---
----When a live watch() observes the same target, the answer comes from the
----watched full-document result without any request; otherwise a synchronous
----`kakehashi/captures/range` request is made.
+---The request is a synchronous `kakehashi/captures/full`; with a live
+---watch() it shrinks to a delta merged over the watcher's result, so the
+---answer always reflects the current document.
 ---@param opts? {
 ---  range?: lsp.Range,
 ---  client?: vim.lsp.Client,
@@ -81,21 +80,12 @@ function M.get(opts)
 	opts = opts or {}
 	local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
 	local client = opts.client or util.get_client(bufnr)
-	local injection = opts.injection ~= false
 	local range = opts.range or cursor_range(client.offset_encoding or "utf-16")
-
-	local watcher = find_watcher(client.id, bufnr, injection)
-	local watched = watcher and watcher.latest[bufnr]
-	if watched ~= nil then
-		return resolve(watched or nil, range)
-	end
-
 	local result = require("kakehashi.lsp.captures").get({
 		kind = "commentstring",
 		client = client,
 		bufnr = bufnr,
-		range = range,
-		injection = injection,
+		injection = opts.injection ~= false,
 		timeout_ms = opts.timeout_ms,
 	})
 	return resolve(result, range)
@@ -161,102 +151,21 @@ function M.create_pre_hook(opts)
 	end
 end
 
----@class KakehashiCommentstringWatcher
----@field autocmd integer User KakehashiCapturesUpdate subscriber
----@field latest table<integer, KakehashiCapturesResult | false> last watched result per buffer; false records a null result
-
----Live watchers by parameter identity, mirroring captures.watch(): repeated
----watch() calls with the same parameters share one subscriber.
----@type table<string, KakehashiCommentstringWatcher>
-local watchers = {}
-
----@param autocmd integer
----@return boolean whether the autocmd has not been deleted
-local function watcher_alive(autocmd)
-	local subscribers = vim.api.nvim_get_autocmds({ event = "User", pattern = "KakehashiCapturesUpdate" })
-	for _, au in ipairs(subscribers) do
-		if au.id == autocmd then
-			return true
-		end
-	end
-	return false
-end
-
----@param client_id integer
----@param bufnr? integer
----@param injection boolean
----@return string
-local function watcher_key(client_id, bufnr, injection)
-	return ("%d/%s/%s"):format(client_id, bufnr or "*", tostring(injection))
-end
-
----Find a live watcher observing the target, preferring the buffer-pinned
----watcher over an all-buffer one of the same client/injection.
----(forward-declared above get(), which consults it before requesting)
----@param client_id integer
----@param bufnr integer
----@param injection boolean
----@return KakehashiCommentstringWatcher | nil
-function find_watcher(client_id, bufnr, injection)
-	local keys = { watcher_key(client_id, bufnr, injection), watcher_key(client_id, nil, injection) }
-	for _, key in ipairs(keys) do
-		local watcher = watchers[key]
-		if watcher and watcher_alive(watcher.autocmd) then
-			return watcher
-		end
-	end
-	return nil
-end
-
----Make get() answer without a request: a captures.watch() on kind
----"commentstring" keeps the full-document captures fresh (cheap deltas
----piggybacking on semantic tokens), and get() resolves any range from the
----watched result in memory instead of asking the server. The 'commentstring'
----option is never touched — applying the value stays the caller's business.
----Freshness rides on the semantic tokens cadence, so an answer right after
----an edit may lag one update behind.
----Unlike get(), a nil bufnr does not mean the current buffer: the watcher
----then follows every buffer the client serves. Delete the autocmd with
----vim.api.nvim_del_autocmd() to stop watching; the underlying captures
----watcher keeps running, like the other extra modules.
+---Make get() cheap: watching is simply captures.watch() on kind
+---"commentstring" — get() then cooperates with that watcher, continuing its
+---delta lineage instead of running a full traversal per call, and hands its
+---merged result back as the new lineage. The 'commentstring' option is never
+---touched; applying get()'s value stays the caller's business.
 ---@param opts? { client?: vim.lsp.Client, bufnr?: integer, injection?: boolean } injection defaults to true
----@return integer autocmd id of the User KakehashiCapturesUpdate subscriber
+---@return integer autocmd id from captures.watch; delete it to stop watching
 function M.watch(opts)
 	opts = opts or {}
-	local injection = opts.injection ~= false
-	local client = opts.client or util.get_client(opts.bufnr or vim.api.nvim_get_current_buf())
-
-	local key = watcher_key(client.id, opts.bufnr, injection)
-	local existing = watchers[key]
-	if existing and watcher_alive(existing.autocmd) then
-		return existing.autocmd
-	end
-
-	require("kakehashi.lsp.captures").watch({
+	return require("kakehashi.lsp.captures").watch({
 		kind = "commentstring",
-		client = client,
+		client = opts.client,
 		bufnr = opts.bufnr,
-		injection = injection,
+		injection = opts.injection ~= false,
 	})
-
-	---@type table<integer, KakehashiCapturesResult | false>
-	local latest = {}
-	local autocmd = vim.api.nvim_create_autocmd("User", {
-		pattern = "KakehashiCapturesUpdate",
-		callback = function(ev)
-			if ev.data.kind ~= "commentstring" or ev.data.injection ~= injection then
-				return
-			end
-			if opts.bufnr and ev.data.bufnr ~= opts.bufnr then
-				return
-			end
-			-- false keeps a null result distinguishable from "never watched",
-			-- which would send get() into its fallback request
-			latest[ev.data.bufnr] = ev.data.result or false
-		end,
-	})
-	watchers[key] = { autocmd = autocmd, latest = latest }
-	return autocmd
 end
 
 return M
