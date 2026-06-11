@@ -188,4 +188,26 @@ T["watch() without bufnr watches every buffer the client serves"] = function()
 	H.eq(buf2, events[2].bufnr)
 end
 
+T["watch() without bufnr keeps a delta lineage per buffer"] = function()
+	local client = H.fake_client({
+		["kakehashi/captures/full"] = function(params)
+			return { resultId = "full:" .. params.textDocument.uri, matches = {}, skipped = {} }
+		end,
+		["kakehashi/captures/full/delta"] = { resultId = "r2", edits = {} },
+	})
+	local buf1 = H.scratch_buf()
+	local buf2 = H.scratch_buf()
+	local semantic_full = "textDocument/semanticTokens/full"
+
+	require("kakehashi.lsp.captures").watch({ client = client, kind = "context" })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf1, method = semantic_full })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf2, method = semantic_full })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf1, method = semantic_full .. "/delta" })
+
+	H.eq(3, #client.calls)
+	H.eq("kakehashi/captures/full/delta", client.calls[3].method)
+	H.eq("full:" .. vim.uri_from_bufnr(buf1), client.calls[3].params.previousResultId)
+	H.eq(vim.uri_from_bufnr(buf1), client.calls[3].params.textDocument.uri)
+end
+
 return T
