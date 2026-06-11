@@ -135,4 +135,27 @@ T["conceal() with the same parameters reuses the live watcher and applier"] = fu
 	assert(recreated ~= applier, "a deleted applier should be recreated")
 end
 
+T["conceal() converts UTF-16 positions to byte columns for extmarks"] = function()
+	local result = {
+		resultId = "r1",
+		matches = {
+			{
+				patternIndex = 0,
+				language = "markdown_inline",
+				-- the backtick after あい: UTF-16 units 2..3, bytes 6..7
+				captures = { capture("code_span_delimiter", range(0, 2, 0, 3), { conceal = "" }) },
+			},
+		},
+		skipped = {},
+	}
+	local client = H.fake_client({ ["kakehashi/captures/full"] = result })
+	local buf = H.scratch_buf()
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "あい`x`" })
+
+	require("kakehashi.extra").conceal({ client = client, bufnr = buf })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+
+	H.eq({ { row = 0, col = 6, end_row = 0, end_col = 7, conceal = "" } }, get_conceal_marks(buf))
+end
+
 return T
