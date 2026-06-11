@@ -178,12 +178,12 @@ across toggles.
 
 What nvim-ts-context-commentstring derives from a client-side parse — `-- %s`
 inside a lua block of a markdown file, `{/* %s */}` inside JSX — decided by
-the server instead. This plugin ships `queries/<lang>/commentstring.scm`
-(lua, vim, markdown, html, css, javascript, typescript, tsx, python, bash,
-yaml, query) where each pattern captures the nodes a commentstring applies to
-and states the value with `#set! commentstring "..."`; put the plugin
-directory on the server's `searchPaths` and extend or override per language
-by shadowing the file in an earlier path.
+the server instead. This plugin ships `queries/<lang>/commentstring.scm` for
+120+ languages (values sourced from Comment.nvim's tables, roots validated
+against the real grammars); each pattern captures the nodes a commentstring
+applies to and states the value with `#set! commentstring "..."`. Put the
+plugin directory on the server's `searchPaths` and extend or override per
+language by shadowing the file in an earlier path.
 
 `get()` synchronously runs the query (`kakehashi/captures/full`) and returns
 the commentstring of the innermost capture containing the given range
