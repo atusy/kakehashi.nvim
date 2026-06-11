@@ -66,8 +66,6 @@ local function applier_alive(autocmd)
 	return false
 end
 
-M.conceal = {}
-
 ---Toggle concealing text the way `highlights.scm` directs (`#set! conceal`),
 ---driven by the kakehashi server instead of a client-side Tree-sitter parse:
 ---a captures.watch() on kind "highlights" keeps the captures fresh, and every
@@ -78,7 +76,7 @@ M.conceal = {}
 ---Conceal only shows once 'conceallevel' is set; that is left to the user.
 ---@param opts? { client?: vim.lsp.Client, bufnr?: integer, injection?: boolean } injection defaults to true: conceal usually lives in injected layers
 ---@return boolean enabled whether this call turned concealing on
-function M.conceal.toggle(opts)
+function M.toggle(opts)
 	opts = opts or {}
 	local injection = opts.injection ~= false
 	local client = opts.client or util.get_client(opts.bufnr or vim.api.nvim_get_current_buf())

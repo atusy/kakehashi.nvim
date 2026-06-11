@@ -128,7 +128,7 @@ extmarks — capture-level values win over the match-level `#set!` that covers
 the whole pattern, mirroring `vim.treesitter.highlighter`:
 
 ```lua
-require("kakehashi.extra").conceal.toggle() -- all buffers of the attached client
+require("kakehashi.extra.conceal").toggle() -- all buffers of the attached client
 vim.wo.conceallevel = 2 -- conceal only shows once 'conceallevel' is set
 ```
 

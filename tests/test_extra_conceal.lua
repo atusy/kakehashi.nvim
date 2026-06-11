@@ -55,7 +55,7 @@ T["conceal.toggle() watches highlights and conceals captures carrying conceal me
 	local buf = H.scratch_buf()
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "`x`", "abcdefghij" })
 
-	require("kakehashi.extra").conceal.toggle({ client = client, bufnr = buf })
+	require("kakehashi.extra.conceal").toggle({ client = client, bufnr = buf })
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
 
 	H.eq("kakehashi/captures/full", client.calls[1].method)
@@ -104,7 +104,7 @@ T["conceal.toggle() replaces marks on update and clears them on a null result"] 
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "`x`", "abcdefghij" })
 	local pending_full = { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" }
 
-	require("kakehashi.extra").conceal.toggle({ client = client, bufnr = buf })
+	require("kakehashi.extra.conceal").toggle({ client = client, bufnr = buf })
 
 	H.fire_lsp_request(client, pending_full)
 	H.eq({ { row = 0, col = 0, end_row = 0, end_col = 1, conceal = "" } }, get_conceal_marks(buf))
@@ -131,7 +131,7 @@ T["conceal.toggle() turns concealing off (clearing marks) and back on"] = functi
 	local client = H.fake_client({ ["kakehashi/captures/full"] = result })
 	local buf = H.scratch_buf()
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "`x`" })
-	local toggle = require("kakehashi.extra").conceal.toggle
+	local toggle = require("kakehashi.extra.conceal").toggle
 	local pending_full = { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" }
 
 	H.eq(true, toggle({ client = client, bufnr = buf }))
@@ -149,7 +149,7 @@ T["conceal.toggle() turns concealing off (clearing marks) and back on"] = functi
 end
 
 T["conceal.toggle() tracks each parameter set independently"] = function()
-	local toggle = require("kakehashi.extra").conceal.toggle
+	local toggle = require("kakehashi.extra.conceal").toggle
 	local client = H.fake_client({})
 	local buf = H.scratch_buf()
 
@@ -176,7 +176,7 @@ T["conceal.toggle() converts UTF-16 positions to byte columns for extmarks"] = f
 	local buf = H.scratch_buf()
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "あい`x`" })
 
-	require("kakehashi.extra").conceal.toggle({ client = client, bufnr = buf })
+	require("kakehashi.extra.conceal").toggle({ client = client, bufnr = buf })
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
 
 	H.eq({ { row = 0, col = 6, end_row = 0, end_col = 7, conceal = "" } }, get_conceal_marks(buf))
