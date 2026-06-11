@@ -85,6 +85,53 @@ local function resolve_delta(previous, result)
 	}
 end
 
+---@class KakehashiCapturesWatcher
+---@field autocmd integer the LspRequest autocmd driving the watcher
+---@field latest table<integer, KakehashiCapturesResult> latest full result per buffer, the delta lineage
+
+---Live watchers by parameter identity, so repeated watch() calls with the
+---same parameters share one autocmd instead of stacking duplicate requests.
+---@type table<string, KakehashiCapturesWatcher>
+local watchers = {}
+
+---@param client_id integer
+---@param bufnr? integer nil for a watcher following every buffer of the client
+---@param kind string
+---@param injection? boolean
+---@return string
+local function watcher_key(client_id, bufnr, kind, injection)
+	return ("%d/%s/%s/%s"):format(client_id, bufnr or "*", kind, tostring(injection == true))
+end
+
+---@param autocmd integer
+---@return boolean whether the autocmd has not been deleted
+local function autocmd_alive(autocmd)
+	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "LspRequest" })) do
+		if au.id == autocmd then
+			return true
+		end
+	end
+	return false
+end
+
+---Find a live watcher observing the target, preferring the buffer-specific
+---watcher over an all-buffer one of the same client/kind/injection.
+---@param client_id integer
+---@param bufnr integer
+---@param kind string
+---@param injection? boolean
+---@return KakehashiCapturesWatcher | nil
+local function find_watcher(client_id, bufnr, kind, injection)
+	local keys = { watcher_key(client_id, bufnr, kind, injection), watcher_key(client_id, nil, kind, injection) }
+	for _, key in ipairs(keys) do
+		local watcher = watchers[key]
+		if watcher and autocmd_alive(watcher.autocmd) then
+			return watcher
+		end
+	end
+	return nil
+end
+
 ---Run the per-language `queries/<lang>/<kind>.scm` query over the document.
 ---
 ---- default: `kakehashi/captures/full`
@@ -94,6 +141,10 @@ end
 ---  merged over the previous matches so the caller always receives a new
 ---  full result. A stale lineage (null delta) transparently falls back to a
 ---  fresh `full` request.
+---
+---When a live watch() observes the same target, get() cooperates with it:
+---the watcher's latest result stands in for a missing `previousResult`, and
+---the result of a full/delta request becomes the watcher's new lineage.
 ---@param opts {
 ---  kind: string,
 ---  client?: vim.lsp.Client,
@@ -132,50 +183,35 @@ function M.get(opts)
 		})
 	end
 
-	local function request_full()
-		return request("kakehashi/captures/full", full_params(text_document, opts.kind, opts.injection))
+	local watcher = find_watcher(client.id, bufnr, opts.kind, opts.injection)
+
+	---Pass a full result through while keeping the watcher's lineage current,
+	---so the next watcher-driven delta starts from what get() just observed.
+	---@param result KakehashiCapturesResult | nil
+	---@return KakehashiCapturesResult | nil
+	local function keep(result)
+		if watcher then
+			watcher.latest[bufnr] = result
+		end
+		return result
 	end
 
-	if not opts.previousResult then
+	local function request_full()
+		return keep(request("kakehashi/captures/full", full_params(text_document, opts.kind, opts.injection)))
+	end
+
+	local previous = opts.previousResult or (watcher and watcher.latest[bufnr]) or nil
+	if not previous then
 		return request_full()
 	end
 
-	local result = request("kakehashi/captures/full/delta", delta_params(text_document, opts.kind, opts.previousResult))
+	local result = request("kakehashi/captures/full/delta", delta_params(text_document, opts.kind, previous))
 	if not result then
 		-- lineage lost (stale id, ambiguous mode, or server restart):
 		-- the spec says to call full again
 		return request_full()
 	end
-	return resolve_delta(opts.previousResult, result)
-end
-
----@class KakehashiCapturesWatcher
----@field autocmd integer the LspRequest autocmd driving the watcher
----@field latest table<integer, KakehashiCapturesResult> latest full result per buffer, the delta lineage
-
----Live watchers by parameter identity, so repeated watch() calls with the
----same parameters share one autocmd instead of stacking duplicate requests.
----@type table<string, KakehashiCapturesWatcher>
-local watchers = {}
-
----@param client_id integer
----@param bufnr? integer nil for a watcher following every buffer of the client
----@param kind string
----@param injection? boolean
----@return string
-local function watcher_key(client_id, bufnr, kind, injection)
-	return ("%d/%s/%s/%s"):format(client_id, bufnr or "*", kind, tostring(injection == true))
-end
-
----@param autocmd integer
----@return boolean whether the autocmd has not been deleted
-local function autocmd_alive(autocmd)
-	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "LspRequest" })) do
-		if au.id == autocmd then
-			return true
-		end
-	end
-	return false
+	return keep(resolve_delta(previous, result))
 end
 
 ---Keep captures up to date by piggybacking on the editor's semantic tokens
