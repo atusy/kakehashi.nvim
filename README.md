@@ -73,6 +73,38 @@ local visible = captures.get({
 })
 ```
 
+### Keep captures fresh with `kakehashi.lsp.captures.watch()`
+
+Instead of running the delta loop by hand, `watch()` piggybacks on Neovim's
+built-in semantic tokens engine: whenever a `textDocument/semanticTokens/full`
+or `.../full/delta` request to the kakehashi client goes pending (i.e. the
+document changed and the debounce elapsed), the watcher asynchronously mirrors
+it with `kakehashi/captures/full` or `kakehashi/captures/full/delta`, keeps
+the merged full result in memory, and emits a `KakehashiCapturesUpdate` User
+autocmd:
+
+```lua
+require("kakehashi.lsp.captures").watch({ kind = "context", injection = true })
+
+vim.api.nvim_create_autocmd("User", {
+  pattern = "KakehashiCapturesUpdate",
+  callback = function(ev)
+    -- ev.data.kind, ev.data.injection, ev.data.bufnr,
+    -- ev.data.result (a full KakehashiCapturesResult, or nil
+    -- when no language has the kind query)
+  end,
+})
+```
+
+`watch()` returns the watching autocmd id. Calling it again with the same
+parameters (client, buffer, kind, injection) returns the existing autocmd
+while it is alive, so it is safe to call from repeated setup paths; delete
+the autocmd with `vim.api.nvim_del_autocmd()` to stop watching.
+
+Semantic tokens must be enabled for the kakehashi client
+(`:h vim.lsp.semantic_tokens`, on by default for servers that support them) —
+no tokens requests, no capture updates.
+
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
 ```lua
