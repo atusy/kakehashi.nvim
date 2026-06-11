@@ -209,19 +209,45 @@ require("kakehashi.extra.commentstring").watch()
 The returned autocmd id, the all-buffer default, and the
 reuse-by-parameters semantics are `captures.watch()`'s own.
 
-For [Comment.nvim](https://github.com/numToStr/Comment.nvim), wire it up as
-a `pre_hook` and drop nvim-ts-context-commentstring:
+Integrations stay in your config — for example a
+[Comment.nvim](https://github.com/numToStr/Comment.nvim) `pre_hook`
+replacing nvim-ts-context-commentstring (returning nil defers to
+Comment.nvim's own tables, e.g. for buffers without a kakehashi client):
 
 ```lua
 require("Comment").setup({
-  pre_hook = require("kakehashi.extra.commentstring").create_pre_hook(),
+  mappings = false,
+  pre_hook = function(ctx)
+    local ok, commentstring = pcall(function()
+      local bufnr = vim.api.nvim_get_current_buf()
+      -- consult the commented rows, excluding indentation and trailing
+      -- blanks, so the range stays inside the capture holding the code
+      local first = vim.api.nvim_buf_get_lines(bufnr, ctx.range.srow - 1, ctx.range.srow, false)[1] or ""
+      local last = ctx.range.srow == ctx.range.erow and first
+        or vim.api.nvim_buf_get_lines(bufnr, ctx.range.erow - 1, ctx.range.erow, false)[1]
+        or ""
+      return require("kakehashi.extra.commentstring").get({
+        bufnr = bufnr,
+        range = {
+          start = { line = ctx.range.srow - 1, character = (first:find("%S") or 1) - 1 },
+          ["end"] = {
+            line = ctx.range.erow - 1,
+            character = vim.str_utfindex(last, "utf-16", #(last:gsub("%s+$", "")), false),
+          },
+        },
+      })
+    end)
+    if not ok or not commentstring then
+      return nil
+    end
+    -- blockwise needs a closing side ("{/* %s */}" has one, "-- %s" not)
+    if ctx.ctype == require("Comment.utils").ctype.blockwise and not commentstring:find("%%s%s*%S") then
+      return nil
+    end
+    return commentstring
+  end,
 })
 ```
-
-The hook consults the rows about to be commented (indentation excluded) and
-returns nil — deferring to Comment.nvim's own tables — for buffers without a
-kakehashi client, uncovered ranges, and blockwise operations whose value has
-no closing side.
 
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
