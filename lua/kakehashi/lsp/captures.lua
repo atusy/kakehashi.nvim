@@ -49,6 +49,23 @@ local function apply_edits(matches, edits)
 	return merged
 end
 
+---Interpret a non-null `kakehashi/captures/full/delta` response: splice the
+---edits over the previous full result, or pass a full answer through as-is.
+---@param previous KakehashiCapturesResult
+---@param result KakehashiCapturesResult | KakehashiCapturesDelta
+---@return KakehashiCapturesResult
+local function resolve_delta(previous, result)
+	if result.edits == nil then
+		return result -- the server answered with a full result already
+	end
+	return {
+		resultId = result.resultId,
+		matches = apply_edits(previous.matches, result.edits),
+		-- skipped reflects query compilation, which a delta never changes
+		skipped = previous.skipped,
+	}
+end
+
 ---Run the per-language `queries/<lang>/<kind>.scm` query over the document.
 ---
 ---- default: `kakehashi/captures/full`
@@ -119,15 +136,7 @@ function M.get(opts)
 		-- the spec says to call full again
 		return request_full()
 	end
-	if result.edits == nil then
-		return result -- the server answered with a full result already
-	end
-	return {
-		resultId = result.resultId,
-		matches = apply_edits(opts.previousResult.matches, result.edits),
-		-- skipped reflects query compilation, which a delta never changes
-		skipped = opts.previousResult.skipped,
-	}
+	return resolve_delta(opts.previousResult, result)
 end
 
 ---Live watchers by parameter identity, so repeated watch() calls with the
@@ -203,14 +212,7 @@ function M.watch(opts)
 				-- the spec says to call full again
 				return request_full()
 			end
-			if result.edits ~= nil then
-				result = {
-					resultId = result.resultId,
-					matches = apply_edits(previous.matches, result.edits),
-					skipped = previous.skipped,
-				}
-			end
-			publish(result)
+			publish(resolve_delta(previous, result))
 		end, bufnr)
 	end
 
