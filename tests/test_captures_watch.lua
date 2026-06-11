@@ -162,4 +162,30 @@ T["watch() ignores other clients, buffers, statuses, and methods"] = function()
 	H.eq({}, other_client.calls)
 end
 
+T["watch() without bufnr watches every buffer the client serves"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local buf1 = H.scratch_buf()
+	local buf2 = H.scratch_buf()
+	local events = {}
+	local subscription = vim.api.nvim_create_autocmd("User", {
+		pattern = "KakehashiCapturesUpdate",
+		callback = function(ev)
+			table.insert(events, ev.data)
+		end,
+	})
+
+	require("kakehashi.lsp.captures").watch({ client = client, kind = "context" })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf1, method = "textDocument/semanticTokens/full" })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf2, method = "textDocument/semanticTokens/full" })
+	vim.api.nvim_del_autocmd(subscription)
+
+	H.eq(2, #client.calls)
+	H.eq(vim.uri_from_bufnr(buf1), client.calls[1].params.textDocument.uri)
+	H.eq(buf1, client.calls[1].bufnr)
+	H.eq(vim.uri_from_bufnr(buf2), client.calls[2].params.textDocument.uri)
+	H.eq(buf2, client.calls[2].bufnr)
+	H.eq(buf1, events[1].bufnr)
+	H.eq(buf2, events[2].bufnr)
+end
+
 return T

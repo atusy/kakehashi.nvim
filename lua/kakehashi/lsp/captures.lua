@@ -168,44 +168,48 @@ end
 ---Keep captures up to date by piggybacking on the editor's semantic tokens
 ---requests: whenever a semanticTokens full/delta request goes pending, the
 ---document changed, so the matching captures request is sent asynchronously.
+---Unlike get(), a nil bufnr does not mean the current buffer: the watcher
+---then follows every buffer the client serves, tracking each buffer's
+---delta lineage independently.
 ---@param opts { kind: string, client?: vim.lsp.Client, bufnr?: integer, injection?: boolean }
 ---@return integer autocmd id watching LspRequest
 function M.watch(opts)
 	assert(opts and opts.kind, "opts.kind is required")
-	local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
-	local client = opts.client or util.get_client(bufnr)
-	local text_document = { uri = vim.uri_from_bufnr(bufnr) }
+	local client = opts.client or util.get_client(opts.bufnr or vim.api.nvim_get_current_buf())
 
-	local key = ("%d/%d/%s/%s"):format(client.id, bufnr, opts.kind, tostring(opts.injection == true))
+	local key = ("%d/%s/%s/%s"):format(client.id, opts.bufnr or "*", opts.kind, tostring(opts.injection == true))
 	local existing = watchers[key]
 	if existing and autocmd_alive(existing) then
 		return existing
 	end
 
-	---@type KakehashiCapturesResult? latest full result, the delta lineage
-	local latest
+	---@type table<integer, KakehashiCapturesResult> latest full result per buffer, the delta lineage
+	local latest = {}
 
-	local function publish(result)
-		latest = result
+	---@param bufnr integer
+	local function publish(bufnr, result)
+		latest[bufnr] = result
 		vim.api.nvim_exec_autocmds("User", {
 			pattern = "KakehashiCapturesUpdate",
 			data = { kind = opts.kind, injection = opts.injection, bufnr = bufnr, result = result },
 		})
 	end
 
-	local function request_full()
-		local params = full_params(text_document, opts.kind, opts.injection)
+	---@param bufnr integer
+	local function request_full(bufnr)
+		local params = full_params({ uri = vim.uri_from_bufnr(bufnr) }, opts.kind, opts.injection)
 		---@diagnostic disable-next-line: param-type-mismatch
 		client:request("kakehashi/captures/full", params, function(err, result)
 			if not err then
-				publish(util.denil(result))
+				publish(bufnr, util.denil(result))
 			end
 		end, bufnr)
 	end
 
+	---@param bufnr integer
 	---@param previous KakehashiCapturesResult
-	local function request_delta(previous)
-		local params = delta_params(text_document, opts.kind, previous)
+	local function request_delta(bufnr, previous)
+		local params = delta_params({ uri = vim.uri_from_bufnr(bufnr) }, opts.kind, previous)
 		---@diagnostic disable-next-line: param-type-mismatch
 		client:request("kakehashi/captures/full/delta", params, function(err, result)
 			if err then
@@ -215,9 +219,9 @@ function M.watch(opts)
 			if not result then
 				-- lineage lost (stale id, ambiguous mode, or server restart):
 				-- the spec says to call full again
-				return request_full()
+				return request_full(bufnr)
 			end
-			publish(resolve_delta(previous, result))
+			publish(bufnr, resolve_delta(previous, result))
 		end, bufnr)
 	end
 
@@ -227,16 +231,16 @@ function M.watch(opts)
 				return
 			end
 			local request = ev.data.request
-			if request.type ~= "pending" or request.bufnr ~= bufnr then
+			if request.type ~= "pending" or (opts.bufnr and request.bufnr ~= opts.bufnr) then
 				return
 			end
 			if request.method == "textDocument/semanticTokens/full" then
-				request_full()
+				request_full(request.bufnr)
 			elseif request.method == "textDocument/semanticTokens/full/delta" then
-				if latest then
-					request_delta(latest)
+				if latest[request.bufnr] then
+					request_delta(request.bufnr, latest[request.bufnr])
 				else
-					request_full()
+					request_full(request.bufnr)
 				end
 			end
 		end,
