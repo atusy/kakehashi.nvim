@@ -149,10 +149,23 @@ function M.get(opts)
 	return resolve_delta(opts.previousResult, result)
 end
 
+---@class KakehashiCapturesWatcher
+---@field autocmd integer the LspRequest autocmd driving the watcher
+---@field latest table<integer, KakehashiCapturesResult> latest full result per buffer, the delta lineage
+
 ---Live watchers by parameter identity, so repeated watch() calls with the
 ---same parameters share one autocmd instead of stacking duplicate requests.
----@type table<string, integer>
+---@type table<string, KakehashiCapturesWatcher>
 local watchers = {}
+
+---@param client_id integer
+---@param bufnr? integer nil for a watcher following every buffer of the client
+---@param kind string
+---@param injection? boolean
+---@return string
+local function watcher_key(client_id, bufnr, kind, injection)
+	return ("%d/%s/%s/%s"):format(client_id, bufnr or "*", kind, tostring(injection == true))
+end
 
 ---@param autocmd integer
 ---@return boolean whether the autocmd has not been deleted
@@ -177,10 +190,10 @@ function M.watch(opts)
 	assert(opts and opts.kind, "opts.kind is required")
 	local client = opts.client or util.get_client(opts.bufnr or vim.api.nvim_get_current_buf())
 
-	local key = ("%d/%s/%s/%s"):format(client.id, opts.bufnr or "*", opts.kind, tostring(opts.injection == true))
+	local key = watcher_key(client.id, opts.bufnr, opts.kind, opts.injection)
 	local existing = watchers[key]
-	if existing and autocmd_alive(existing) then
-		return existing
+	if existing and autocmd_alive(existing.autocmd) then
+		return existing.autocmd
 	end
 
 	---@type table<integer, KakehashiCapturesResult> latest full result per buffer, the delta lineage
@@ -245,7 +258,7 @@ function M.watch(opts)
 			end
 		end,
 	})
-	watchers[key] = autocmd
+	watchers[key] = { autocmd = autocmd, latest = latest }
 	return autocmd
 end
 
