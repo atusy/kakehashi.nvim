@@ -1,13 +1,13 @@
 local H = {}
 
-local next_client_id = 0
-
 --- Fake vim.lsp.Client recording request_sync calls and replying from a table.
 ---@param responses table<string, any> method -> result (or function(params) -> result)
 function H.fake_client(responses)
-	next_client_id = next_client_id + 1
+	-- the counter is process-global: each test file dofiles this helper, and
+	-- per-file counters would collide in registries keyed by client id
+	_G.__kakehashi_test_next_client_id = (_G.__kakehashi_test_next_client_id or 0) + 1
 	local client = {
-		id = next_client_id,
+		id = _G.__kakehashi_test_next_client_id,
 		name = "kakehashi",
 		calls = {},
 	}
