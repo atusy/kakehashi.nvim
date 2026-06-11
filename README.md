@@ -96,6 +96,11 @@ vim.api.nvim_create_autocmd("User", {
 })
 ```
 
+Unlike `get()`, a nil `bufnr` does not mean the current buffer: the watcher
+above follows every buffer the client serves, tracking each buffer's delta
+lineage independently (`ev.data.bufnr` tells updates apart). Pass `bufnr` to
+pin the watcher to a single buffer.
+
 `watch()` returns the watching autocmd id. Calling it again with the same
 parameters (client, buffer, kind, injection) returns the existing autocmd
 while it is alive, so it is safe to call from repeated setup paths; delete
