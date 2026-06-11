@@ -196,20 +196,24 @@ Passing the whole selection matters: a selection spanning out of a JSX
 element into the surrounding function is not contained by the `jsx_element`
 capture, so the javascript `// %s` wins instead.
 
-To stop calling `get()` by hand, `watch()` keeps the buffer-local
-'commentstring' option itself in sync with the cursor: cursor movement and
-buffer entry asynchronously run the same request and apply the answer, and
-outside every capture the option returns to what it was before the watcher
-touched the buffer. Built-in commenting (`gc`) reads the option, so it
-becomes context-aware with just:
+`watch()` makes `get()` answer instantly: it chains a `captures.watch()` on
+kind `commentstring` (full results kept fresh by cheap deltas piggybacking on
+semantic tokens) and `get()` then resolves any range from the watched result
+in memory — no request at all, which makes it safe to call in hot paths like
+an `'operatorfunc'` or a commenting plugin hook. It never touches the
+'commentstring' option; applying the value stays your business. Freshness
+rides on the semantic tokens cadence, so an answer immediately after an edit
+may lag one update behind.
 
 ```lua
 require("kakehashi.extra.commentstring").watch()
 ```
 
-Like `captures.watch()`, a nil `bufnr` follows every buffer the client is
-attached to, repeated calls with the same parameters (client, buffer,
-injection) reuse the live autocmd, and `vim.api.nvim_del_autocmd()` stops it.
+Like `captures.watch()`, a nil `bufnr` follows every buffer the client
+serves, repeated calls with the same parameters (client, buffer, injection)
+reuse the live subscriber, and `vim.api.nvim_del_autocmd()` stops it (the
+shared captures watcher keeps running). Buffers the watcher has not heard
+about yet transparently fall back to the synchronous range request.
 
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 

@@ -124,7 +124,45 @@ T["get() defaults the range to the cursor position in the client's encoding"] = 
 	H.eq(range(0, 2, 0, 2), client.calls[1].params.range)
 end
 
-T["watch() keeps 'commentstring' in sync with the cursor context"] = function()
+---A full-document result as the captures watcher publishes it.
+local function full_result_with(matches)
+	return { resultId = "r1", matches = matches, skipped = {} }
+end
+
+T["watch() lets get() answer from the watcher's results without a request"] = function()
+	local client = H.fake_client({
+		["kakehashi/captures/full"] = full_result_with({
+			{
+				patternIndex = 0,
+				language = "markdown",
+				captures = { capture(range(0, 0, 50, 0), { commentstring = "<!-- %s -->" }) },
+			},
+			{
+				patternIndex = 0,
+				language = "lua",
+				captures = { capture(range(10, 0, 20, 0), { commentstring = "-- %s" }) },
+			},
+		}),
+	})
+	local buf = H.scratch_buf()
+	vim.bo[buf].commentstring = "# %s"
+	local commentstring = require("kakehashi.extra.commentstring")
+
+	commentstring.watch({ client = client, bufnr = buf })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+
+	H.eq(1, #client.calls)
+	H.eq("kakehashi/captures/full", client.calls[1].method)
+	H.eq("commentstring", client.calls[1].params.kind)
+
+	H.eq("-- %s", commentstring.get({ client = client, bufnr = buf, range = range(12, 0, 12, 4) }))
+	H.eq("<!-- %s -->", commentstring.get({ client = client, bufnr = buf, range = range(30, 0, 30, 0) }))
+	H.eq(nil, commentstring.get({ client = client, bufnr = buf, range = range(60, 0, 60, 0) }))
+	H.eq(1, #client.calls, "watched get() must not send requests of its own")
+	H.eq("# %s", vim.bo[buf].commentstring, "the option is the caller's business, not the watcher's")
+end
+
+T["get() falls back to a range request until the watcher has a result"] = function()
 	local client = H.fake_client({
 		["kakehashi/captures/range"] = result_with({
 			{
@@ -135,59 +173,50 @@ T["watch() keeps 'commentstring' in sync with the cursor context"] = function()
 		}),
 	})
 	local buf = H.scratch_buf()
-	local lines = {}
-	for i = 1, 40 do
-		lines[i] = "L" .. i
-	end
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-	vim.api.nvim_win_set_buf(0, buf)
-	vim.bo[buf].commentstring = "# %s"
-	vim.api.nvim_win_set_cursor(0, { 12, 0 })
+	local commentstring = require("kakehashi.extra.commentstring")
 
-	require("kakehashi.extra.commentstring").watch({ client = client, bufnr = buf })
-
+	commentstring.watch({ client = client, bufnr = buf })
+	H.eq("-- %s", commentstring.get({ client = client, bufnr = buf, range = range(12, 0, 12, 0) }))
+	H.eq(1, #client.calls)
 	H.eq("kakehashi/captures/range", client.calls[1].method)
-	H.eq("commentstring", client.calls[1].params.kind)
-	H.eq(range(11, 0, 11, 0), client.calls[1].params.range)
-	H.eq("-- %s", vim.bo[buf].commentstring, "watch() should update on creation, before any cursor event")
-
-	-- outside every capture the original option value comes back
-	vim.api.nvim_win_set_cursor(0, { 30, 0 })
-	vim.api.nvim_exec_autocmds("CursorMoved", {})
-	H.eq("# %s", vim.bo[buf].commentstring)
-
-	-- a watcher pinned to a buffer ignores events from other buffers
-	local calls = #client.calls
-	vim.api.nvim_win_set_buf(0, H.scratch_buf())
-	vim.api.nvim_exec_autocmds("CursorMoved", {})
-	H.eq(calls, #client.calls)
 end
 
-T["watch() without bufnr follows the buffers the client is attached to"] = function()
+T["watch() without bufnr serves get() for every buffer of the client"] = function()
 	local client = H.fake_client({
-		["kakehashi/captures/range"] = result_with({
+		["kakehashi/captures/full"] = full_result_with({
 			{
 				patternIndex = 0,
 				language = "lua",
 				captures = { capture(range(0, 0, 50, 0), { commentstring = "-- %s" }) },
 			},
 		}),
+		["kakehashi/captures/range"] = result_with({}),
 	})
-	local attached_buf = H.scratch_buf()
-	local other_buf = H.scratch_buf()
-	client.attached_buffers = { [attached_buf] = true }
-	vim.api.nvim_win_set_buf(0, other_buf)
+	local buf1 = H.scratch_buf()
+	local buf2 = H.scratch_buf()
+	local commentstring = require("kakehashi.extra.commentstring")
 
-	require("kakehashi.extra.commentstring").watch({ client = client })
-	H.eq({}, client.calls, "buffers the client does not serve should be left alone")
+	commentstring.watch({ client = client })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf1, method = "textDocument/semanticTokens/full" })
 
-	vim.api.nvim_win_set_buf(0, attached_buf)
-	vim.api.nvim_exec_autocmds("CursorMoved", {})
-	assert(#client.calls > 0, "expected a request for the attached buffer")
-	for _, call in ipairs(client.calls) do
-		H.eq(vim.uri_from_bufnr(attached_buf), call.params.textDocument.uri)
-	end
-	H.eq("-- %s", vim.bo[attached_buf].commentstring)
+	H.eq("-- %s", commentstring.get({ client = client, bufnr = buf1, range = range(5, 0, 5, 0) }))
+	H.eq(1, #client.calls, "buf1 should be served from the watcher")
+
+	H.eq(nil, commentstring.get({ client = client, bufnr = buf2, range = range(5, 0, 5, 0) }))
+	H.eq(2, #client.calls, "buf2 has no watched result yet and should fall back")
+	H.eq("kakehashi/captures/range", client.calls[2].method)
+end
+
+T["a watched null result answers nil without falling back"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = vim.NIL })
+	local buf = H.scratch_buf()
+	local commentstring = require("kakehashi.extra.commentstring")
+
+	commentstring.watch({ client = client, bufnr = buf })
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+
+	H.eq(nil, commentstring.get({ client = client, bufnr = buf, range = range(0, 0, 0, 0) }))
+	H.eq(1, #client.calls, "a known-null result needs no range request")
 end
 
 T["watch() with the same parameters returns the live autocmd"] = function()

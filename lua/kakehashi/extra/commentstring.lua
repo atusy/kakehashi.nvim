@@ -56,6 +56,8 @@ local function resolve(result, range)
 	return best
 end
 
+local find_watcher
+
 ---Context-aware 'commentstring' the way nvim-ts-context-commentstring
 ---computes it, but decided by `queries/<lang>/commentstring.scm` on the
 ---kakehashi server (this plugin ships a starter set under queries/; put the
@@ -63,6 +65,10 @@ end
 ---nodes a commentstring applies to and states the value with
 ---`#set! commentstring "..."`. The range narrows the decision — pass the
 ---selection about to be commented; it defaults to the cursor position.
+---
+---When a live watch() observes the same target, the answer comes from the
+---watched full-document result without any request; otherwise a synchronous
+---`kakehashi/captures/range` request is made.
 ---@param opts? {
 ---  range?: lsp.Range,
 ---  client?: vim.lsp.Client,
@@ -75,27 +81,40 @@ function M.get(opts)
 	opts = opts or {}
 	local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
 	local client = opts.client or util.get_client(bufnr)
+	local injection = opts.injection ~= false
 	local range = opts.range or cursor_range(client.offset_encoding or "utf-16")
+
+	local watcher = find_watcher(client.id, bufnr, injection)
+	local watched = watcher and watcher.latest[bufnr]
+	if watched ~= nil then
+		return resolve(watched or nil, range)
+	end
+
 	local result = require("kakehashi.lsp.captures").get({
 		kind = "commentstring",
 		client = client,
 		bufnr = bufnr,
 		range = range,
-		injection = opts.injection ~= false,
+		injection = injection,
 		timeout_ms = opts.timeout_ms,
 	})
 	return resolve(result, range)
 end
 
+---@class KakehashiCommentstringWatcher
+---@field autocmd integer User KakehashiCapturesUpdate subscriber
+---@field latest table<integer, KakehashiCapturesResult | false> last watched result per buffer; false records a null result
+
 ---Live watchers by parameter identity, mirroring captures.watch(): repeated
----watch() calls with the same parameters share one autocmd.
----@type table<string, integer>
+---watch() calls with the same parameters share one subscriber.
+---@type table<string, KakehashiCommentstringWatcher>
 local watchers = {}
 
 ---@param autocmd integer
 ---@return boolean whether the autocmd has not been deleted
 local function watcher_alive(autocmd)
-	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "CursorMoved" })) do
+	local subscribers = vim.api.nvim_get_autocmds({ event = "User", pattern = "KakehashiCapturesUpdate" })
+	for _, au in ipairs(subscribers) do
 		if au.id == autocmd then
 			return true
 		end
@@ -103,63 +122,80 @@ local function watcher_alive(autocmd)
 	return false
 end
 
----Keep the buffer-local 'commentstring' in sync with the cursor context:
----cursor movement and buffer entry asynchronously run get()'s request at the
----cursor and apply the answer, so :h commenting and plugins reading the
----option pick the contextual value up. Outside every capture the option
----returns to what it was before the watcher first touched the buffer.
+---@param client_id integer
+---@param bufnr? integer
+---@param injection boolean
+---@return string
+local function watcher_key(client_id, bufnr, injection)
+	return ("%d/%s/%s"):format(client_id, bufnr or "*", tostring(injection))
+end
+
+---Find a live watcher observing the target, preferring the buffer-pinned
+---watcher over an all-buffer one of the same client/injection.
+---(forward-declared above get(), which consults it before requesting)
+---@param client_id integer
+---@param bufnr integer
+---@param injection boolean
+---@return KakehashiCommentstringWatcher | nil
+function find_watcher(client_id, bufnr, injection)
+	local keys = { watcher_key(client_id, bufnr, injection), watcher_key(client_id, nil, injection) }
+	for _, key in ipairs(keys) do
+		local watcher = watchers[key]
+		if watcher and watcher_alive(watcher.autocmd) then
+			return watcher
+		end
+	end
+	return nil
+end
+
+---Make get() answer without a request: a captures.watch() on kind
+---"commentstring" keeps the full-document captures fresh (cheap deltas
+---piggybacking on semantic tokens), and get() resolves any range from the
+---watched result in memory instead of asking the server. The 'commentstring'
+---option is never touched — applying the value stays the caller's business.
+---Freshness rides on the semantic tokens cadence, so an answer right after
+---an edit may lag one update behind.
 ---Unlike get(), a nil bufnr does not mean the current buffer: the watcher
----then follows every buffer the client is attached to. Delete the autocmd
----with vim.api.nvim_del_autocmd() to stop watching.
+---then follows every buffer the client serves. Delete the autocmd with
+---vim.api.nvim_del_autocmd() to stop watching; the underlying captures
+---watcher keeps running, like the other extra modules.
 ---@param opts? { client?: vim.lsp.Client, bufnr?: integer, injection?: boolean } injection defaults to true
----@return integer autocmd id watching cursor and buffer events
+---@return integer autocmd id of the User KakehashiCapturesUpdate subscriber
 function M.watch(opts)
 	opts = opts or {}
 	local injection = opts.injection ~= false
 	local client = opts.client or util.get_client(opts.bufnr or vim.api.nvim_get_current_buf())
 
-	local key = ("%d/%s/%s"):format(client.id, opts.bufnr or "*", tostring(injection))
+	local key = watcher_key(client.id, opts.bufnr, injection)
 	local existing = watchers[key]
-	if existing and watcher_alive(existing) then
-		return existing
+	if existing and watcher_alive(existing.autocmd) then
+		return existing.autocmd
 	end
 
-	---@type table<integer, string> 'commentstring' before the watcher first touched the buffer
-	local originals = {}
-
-	local function update()
-		local bufnr = vim.api.nvim_get_current_buf()
-		if opts.bufnr then
-			if bufnr ~= opts.bufnr then
-				return
-			end
-		elseif not (client.attached_buffers and client.attached_buffers[bufnr]) then
-			return
-		end
-		local range = cursor_range(client.offset_encoding or "utf-16")
-		local params = {
-			textDocument = { uri = vim.uri_from_bufnr(bufnr) },
-			kind = "commentstring",
-			range = range,
-			injection = injection,
-		}
-		---@diagnostic disable-next-line: param-type-mismatch
-		client:request("kakehashi/captures/range", params, function(err, result)
-			if err or not vim.api.nvim_buf_is_valid(bufnr) then
-				return
-			end
-			if originals[bufnr] == nil then
-				originals[bufnr] = vim.bo[bufnr].commentstring
-			end
-			vim.bo[bufnr].commentstring = resolve(util.denil(result), range) or originals[bufnr]
-		end, bufnr)
-	end
-
-	local autocmd = vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "BufEnter" }, {
-		callback = update,
+	require("kakehashi.lsp.captures").watch({
+		kind = "commentstring",
+		client = client,
+		bufnr = opts.bufnr,
+		injection = injection,
 	})
-	watchers[key] = autocmd
-	update()
+
+	---@type table<integer, KakehashiCapturesResult | false>
+	local latest = {}
+	local autocmd = vim.api.nvim_create_autocmd("User", {
+		pattern = "KakehashiCapturesUpdate",
+		callback = function(ev)
+			if ev.data.kind ~= "commentstring" or ev.data.injection ~= injection then
+				return
+			end
+			if opts.bufnr and ev.data.bufnr ~= opts.bufnr then
+				return
+			end
+			-- false keeps a null result distinguishable from "never watched",
+			-- which would send get() into its fallback request
+			latest[ev.data.bufnr] = ev.data.result or false
+		end,
+	})
+	watchers[key] = { autocmd = autocmd, latest = latest }
 	return autocmd
 end
 
