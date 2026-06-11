@@ -106,6 +106,13 @@ parameters (client, buffer, kind, injection) returns the existing autocmd
 while it is alive, so it is safe to call from repeated setup paths; delete
 the autocmd with `vim.api.nvim_del_autocmd()` to stop watching.
 
+`get()` cooperates with a live watcher observing the same target (client,
+buffer, kind, injection — buffer-specific or all-buffer): a synchronous
+`get()` without `previousResult` continues the watcher's delta lineage
+instead of paying for a fresh full traversal, and hands its result back so
+the watcher's next delta starts from what `get()` just observed. Range
+requests stay outside the lineage as usual.
+
 Semantic tokens must be enabled for the kakehashi client
 (`:h vim.lsp.semantic_tokens`, on by default for servers that support them) —
 no tokens requests, no capture updates.
