@@ -130,6 +130,22 @@ function M.get(opts)
 	}
 end
 
+---Live watchers by parameter identity, so repeated watch() calls with the
+---same parameters share one autocmd instead of stacking duplicate requests.
+---@type table<string, integer>
+local watchers = {}
+
+---@param autocmd integer
+---@return boolean whether the autocmd has not been deleted
+local function autocmd_alive(autocmd)
+	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "LspRequest" })) do
+		if au.id == autocmd then
+			return true
+		end
+	end
+	return false
+end
+
 ---Keep captures up to date by piggybacking on the editor's semantic tokens
 ---requests: whenever a semanticTokens full/delta request goes pending, the
 ---document changed, so the matching captures request is sent asynchronously.
@@ -140,6 +156,12 @@ function M.watch(opts)
 	local bufnr = opts.bufnr or vim.api.nvim_get_current_buf()
 	local client = opts.client or util.get_client(bufnr)
 	local text_document = { uri = vim.uri_from_bufnr(bufnr) }
+
+	local key = ("%d/%d/%s/%s"):format(client.id, bufnr, opts.kind, tostring(opts.injection == true))
+	local existing = watchers[key]
+	if existing and autocmd_alive(existing) then
+		return existing
+	end
 
 	---@type KakehashiCapturesResult? latest full result, the delta lineage
 	local latest
@@ -192,7 +214,7 @@ function M.watch(opts)
 		end, bufnr)
 	end
 
-	return vim.api.nvim_create_autocmd("LspRequest", {
+	local autocmd = vim.api.nvim_create_autocmd("LspRequest", {
 		callback = function(ev)
 			if ev.data.client_id ~= client.id then
 				return
@@ -212,6 +234,8 @@ function M.watch(opts)
 			end
 		end,
 	})
+	watchers[key] = autocmd
+	return autocmd
 end
 
 return M

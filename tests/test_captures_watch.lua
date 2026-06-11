@@ -127,4 +127,22 @@ T["watch() falls back to captures/full when delta arrives before any result"] = 
 	H.eq("kakehashi/captures/full", client.calls[1].method)
 end
 
+T["watch() with the same parameters returns the live autocmd instead of stacking watchers"] = function()
+	local captures = require("kakehashi.lsp.captures")
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local buf = H.scratch_buf()
+	local params = { client = client, bufnr = buf, kind = "context", injection = true }
+
+	local autocmd = captures.watch(params)
+	H.eq(autocmd, captures.watch(params), "same parameters should reuse the watcher")
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+	H.eq(1, #client.calls, "a reused watcher must not duplicate requests")
+
+	local other = captures.watch({ client = client, bufnr = buf, kind = "fold", injection = true })
+	assert(other ~= autocmd, "different parameters need their own watcher")
+
+	vim.api.nvim_del_autocmd(autocmd)
+	assert(captures.watch(params) ~= autocmd, "a deleted watcher should be recreated")
+end
+
 return T
