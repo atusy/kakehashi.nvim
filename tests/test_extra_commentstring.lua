@@ -219,6 +219,70 @@ T["a watched null result answers nil without falling back"] = function()
 	H.eq(1, #client.calls, "a known-null result needs no range request")
 end
 
+T["create_pre_hook() consults the commented lines for Comment.nvim"] = function()
+	local client = H.fake_client({
+		["kakehashi/captures/range"] = result_with({
+			{
+				patternIndex = 0,
+				language = "javascript",
+				captures = { capture(range(0, 0, 50, 0)) },
+				metadata = { commentstring = "// %s" },
+			},
+			{
+				patternIndex = 1,
+				language = "javascript",
+				captures = { capture(range(10, 4, 20, 10), { commentstring = "{/* %s */}" }) },
+			},
+		}),
+	})
+	local buf = H.scratch_buf()
+	local lines = {}
+	for i = 1, 40 do
+		lines[i] = "    <p>L" .. i .. "</p>"
+	end
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	local hook = require("kakehashi.extra.commentstring").create_pre_hook({ client = client, bufnr = buf })
+
+	-- linewise rows inside the jsx element (1-based, like Comment.nvim's ctx)
+	H.eq("{/* %s */}", hook({ ctype = 1, range = { srow = 12, scol = 0, erow = 13, ecol = 0 } }))
+	-- indentation is excluded so the inner capture still contains the range
+	H.eq({
+		start = { line = 11, character = 4 },
+		["end"] = { line = 12, character = #lines[13] },
+	}, client.calls[1].params.range)
+
+	-- rows spanning out of the element fall to the outer context
+	H.eq("// %s", hook({ ctype = 1, range = { srow = 12, scol = 0, erow = 30, ecol = 0 } }))
+end
+
+T["create_pre_hook() refuses linewise-only values for blockwise"] = function()
+	local function client_with(commentstring)
+		return H.fake_client({
+			["kakehashi/captures/range"] = result_with({
+				{
+					patternIndex = 0,
+					language = "x",
+					captures = { capture(range(0, 0, 50, 0), { commentstring = commentstring }) },
+				},
+			}),
+		})
+	end
+	local create = require("kakehashi.extra.commentstring").create_pre_hook
+	local ctx = { ctype = 2, range = { srow = 1, scol = 0, erow = 1, ecol = 0 } }
+
+	local lua_hook = create({ client = client_with("-- %s"), bufnr = H.scratch_buf() })
+	H.eq(nil, lua_hook(ctx), "a value with no closing side cannot comment a block")
+
+	local jsx_hook = create({ client = client_with("{/* %s */}"), bufnr = H.scratch_buf() })
+	H.eq("{/* %s */}", jsx_hook(ctx))
+end
+
+T["create_pre_hook() returns nil when no kakehashi client serves the buffer"] = function()
+	local hook = require("kakehashi.extra.commentstring").create_pre_hook()
+	vim.api.nvim_win_set_buf(0, H.scratch_buf())
+	H.eq(nil, hook({ ctype = 1, range = { srow = 1, scol = 0, erow = 1, ecol = 0 } }))
+end
+
 T["watch() with the same parameters returns the live autocmd"] = function()
 	local commentstring = require("kakehashi.extra.commentstring")
 	local client = H.fake_client({})

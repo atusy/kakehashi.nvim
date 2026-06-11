@@ -215,6 +215,20 @@ reuse the live subscriber, and `vim.api.nvim_del_autocmd()` stops it (the
 shared captures watcher keeps running). Buffers the watcher has not heard
 about yet transparently fall back to the synchronous range request.
 
+For [Comment.nvim](https://github.com/numToStr/Comment.nvim), wire it up as
+a `pre_hook` and drop nvim-ts-context-commentstring:
+
+```lua
+require("Comment").setup({
+  pre_hook = require("kakehashi.extra.commentstring").create_pre_hook(),
+})
+```
+
+The hook consults the rows about to be commented (indentation excluded) and
+returns nil — deferring to Comment.nvim's own tables — for buffers without a
+kakehashi client, uncovered ranges, and blockwise operations whose value has
+no closing side.
+
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
 ```lua
