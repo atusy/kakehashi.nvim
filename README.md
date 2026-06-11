@@ -140,6 +140,27 @@ call enabled concealing. The underlying watcher keeps running across toggles —
 watchers are shared by parameters, and a re-enable picks the live result up
 on the next update.
 
+### Sticky context headers via `kakehashi.extra.context.toggle()`
+
+The nvim-treesitter-context experience — the function/class header you are
+inside stays pinned at the top of the window — without a client-side parser:
+the kakehashi server runs your `queries/<lang>/context.scm` (add it to the
+server's `searchPaths`; the `@context` captures follow nvim-treesitter-context
+conventions), a `captures.watch()` on kind `context` keeps the captures
+fresh, and window events re-derive which headers scrolled off above the
+topline into a floating window:
+
+```lua
+require("kakehashi.extra.context").toggle() -- all buffers of the attached client
+```
+
+Headers stack outermost-first, each pinned header is accounted for when
+deciding what the first visible line is, and the float never covers the
+cursor line. Pass `max_lines` to cap the stack and `bufnr` to pin one buffer;
+the float is highlighted with `KakehashiContext` (links to `NormalFloat`).
+Like `conceal.toggle()`, calling it again with the same parameters turns the
+headers off, and the underlying watcher keeps running across toggles.
+
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
 ```lua
