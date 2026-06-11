@@ -45,9 +45,13 @@ local function apply_conceal(bufnr, result, offset_encoding)
 	end
 end
 
----Live appliers by parameter identity, mirroring captures.watch(): repeated
----conceal() calls share one subscriber instead of re-deriving marks N times.
----@type table<string, integer>
+---@class KakehashiConcealApplier
+---@field autocmd integer User KakehashiCapturesUpdate subscriber
+---@field marked table<integer, true> buffers this applier has set marks in
+
+---Live appliers by parameter identity, mirroring captures.watch(): toggling
+---flips the one subscriber for those parameters on and off.
+---@type table<string, KakehashiConcealApplier>
 local appliers = {}
 
 ---@param autocmd integer
@@ -62,33 +66,45 @@ local function applier_alive(autocmd)
 	return false
 end
 
----Conceal text the way `highlights.scm` directs (`#set! conceal`), driven by
----the kakehashi server instead of a client-side Tree-sitter parse: a
----captures.watch() on kind "highlights" keeps the captures fresh, and every
+M.conceal = {}
+
+---Toggle concealing text the way `highlights.scm` directs (`#set! conceal`),
+---driven by the kakehashi server instead of a client-side Tree-sitter parse:
+---a captures.watch() on kind "highlights" keeps the captures fresh, and every
 ---KakehashiCapturesUpdate re-derives the conceal extmarks for that buffer.
+---Toggling off removes the subscriber and its marks, but leaves the watcher
+---running: captures.watch() shares watchers by parameters, so others may
+---depend on it, and a later re-enable picks its live result up instantly.
 ---Conceal only shows once 'conceallevel' is set; that is left to the user.
 ---@param opts? { client?: vim.lsp.Client, bufnr?: integer, injection?: boolean } injection defaults to true: conceal usually lives in injected layers
----@return integer watcher LspRequest autocmd id from captures.watch
----@return integer applier User KakehashiCapturesUpdate autocmd id
-function M.conceal(opts)
+---@return boolean enabled whether this call turned concealing on
+function M.conceal.toggle(opts)
 	opts = opts or {}
 	local injection = opts.injection ~= false
 	local client = opts.client or util.get_client(opts.bufnr or vim.api.nvim_get_current_buf())
 	local offset_encoding = client.offset_encoding or "utf-16"
 
-	local watcher = require("kakehashi.lsp.captures").watch({
+	local key = ("%d/%s/%s"):format(client.id, opts.bufnr or "*", tostring(injection))
+	local existing = appliers[key]
+	if existing and applier_alive(existing.autocmd) then
+		vim.api.nvim_del_autocmd(existing.autocmd)
+		appliers[key] = nil
+		for bufnr in pairs(existing.marked) do
+			if vim.api.nvim_buf_is_valid(bufnr) then
+				vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+			end
+		end
+		return false
+	end
+
+	require("kakehashi.lsp.captures").watch({
 		kind = "highlights",
 		client = client,
 		bufnr = opts.bufnr,
 		injection = injection,
 	})
 
-	local key = ("%d/%s/%s"):format(client.id, opts.bufnr or "*", tostring(injection))
-	local existing = appliers[key]
-	if existing and applier_alive(existing) then
-		return watcher, existing
-	end
-
+	local marked = {}
 	local applier = vim.api.nvim_create_autocmd("User", {
 		pattern = "KakehashiCapturesUpdate",
 		callback = function(ev)
@@ -98,11 +114,12 @@ function M.conceal(opts)
 			if opts.bufnr and ev.data.bufnr ~= opts.bufnr then
 				return
 			end
+			marked[ev.data.bufnr] = true
 			apply_conceal(ev.data.bufnr, ev.data.result, offset_encoding)
 		end,
 	})
-	appliers[key] = applier
-	return watcher, applier
+	appliers[key] = { autocmd = applier, marked = marked }
+	return true
 end
 
 return M

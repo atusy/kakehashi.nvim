@@ -27,7 +27,7 @@ local function get_conceal_marks(buf)
 	end, vim.api.nvim_buf_get_extmarks(buf, NS, 0, -1, { details = true }))
 end
 
-T["conceal() watches highlights and conceals captures carrying conceal metadata"] = function()
+T["conceal.toggle() watches highlights and conceals captures carrying conceal metadata"] = function()
 	local result = {
 		resultId = "r1",
 		matches = {
@@ -55,7 +55,7 @@ T["conceal() watches highlights and conceals captures carrying conceal metadata"
 	local buf = H.scratch_buf()
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "`x`", "abcdefghij" })
 
-	require("kakehashi.extra").conceal({ client = client, bufnr = buf })
+	require("kakehashi.extra").conceal.toggle({ client = client, bufnr = buf })
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
 
 	H.eq("kakehashi/captures/full", client.calls[1].method)
@@ -67,7 +67,7 @@ T["conceal() watches highlights and conceals captures carrying conceal metadata"
 	}, get_conceal_marks(buf))
 end
 
-T["conceal() replaces marks on update and clears them on a null result"] = function()
+T["conceal.toggle() replaces marks on update and clears them on a null result"] = function()
 	local responses = {
 		{
 			resultId = "r1",
@@ -104,7 +104,7 @@ T["conceal() replaces marks on update and clears them on a null result"] = funct
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "`x`", "abcdefghij" })
 	local pending_full = { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" }
 
-	require("kakehashi.extra").conceal({ client = client, bufnr = buf })
+	require("kakehashi.extra").conceal.toggle({ client = client, bufnr = buf })
 
 	H.fire_lsp_request(client, pending_full)
 	H.eq({ { row = 0, col = 0, end_row = 0, end_col = 1, conceal = "" } }, get_conceal_marks(buf))
@@ -116,26 +116,50 @@ T["conceal() replaces marks on update and clears them on a null result"] = funct
 	H.eq({}, get_conceal_marks(buf))
 end
 
-T["conceal() with the same parameters reuses the live watcher and applier"] = function()
-	local extra = require("kakehashi.extra")
-	local client = H.fake_client({})
+T["conceal.toggle() turns concealing off (clearing marks) and back on"] = function()
+	local result = {
+		resultId = "r1",
+		matches = {
+			{
+				patternIndex = 0,
+				language = "markdown",
+				captures = { capture("a", range(0, 0, 0, 1), { conceal = "" }) },
+			},
+		},
+		skipped = {},
+	}
+	local client = H.fake_client({ ["kakehashi/captures/full"] = result })
 	local buf = H.scratch_buf()
-	local params = { client = client, bufnr = buf }
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "`x`" })
+	local toggle = require("kakehashi.extra").conceal.toggle
+	local pending_full = { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" }
 
-	local watcher, applier = extra.conceal(params)
-	local watcher2, applier2 = extra.conceal(params)
-	H.eq(watcher, watcher2, "same parameters should reuse the watcher")
-	H.eq(applier, applier2, "same parameters should reuse the applier")
+	H.eq(true, toggle({ client = client, bufnr = buf }))
+	H.fire_lsp_request(client, pending_full)
+	H.eq(1, #get_conceal_marks(buf))
 
-	local _, other_applier = extra.conceal({ client = client })
-	assert(other_applier ~= applier, "different parameters need their own applier")
+	H.eq(false, toggle({ client = client, bufnr = buf }), "second toggle should disable")
+	H.eq({}, get_conceal_marks(buf), "toggling off should clear the marks")
+	H.fire_lsp_request(client, pending_full)
+	H.eq({}, get_conceal_marks(buf), "a disabled applier must not re-apply marks")
 
-	vim.api.nvim_del_autocmd(applier)
-	local _, recreated = extra.conceal(params)
-	assert(recreated ~= applier, "a deleted applier should be recreated")
+	H.eq(true, toggle({ client = client, bufnr = buf }), "third toggle should re-enable")
+	H.fire_lsp_request(client, pending_full)
+	H.eq(1, #get_conceal_marks(buf))
 end
 
-T["conceal() converts UTF-16 positions to byte columns for extmarks"] = function()
+T["conceal.toggle() tracks each parameter set independently"] = function()
+	local toggle = require("kakehashi.extra").conceal.toggle
+	local client = H.fake_client({})
+	local buf = H.scratch_buf()
+
+	H.eq(true, toggle({ client = client, bufnr = buf }))
+	H.eq(true, toggle({ client = client }), "an all-buffer toggle is not the buffer-pinned one")
+	H.eq(false, toggle({ client = client }))
+	H.eq(false, toggle({ client = client, bufnr = buf }), "the buffer-pinned toggle should still be on")
+end
+
+T["conceal.toggle() converts UTF-16 positions to byte columns for extmarks"] = function()
 	local result = {
 		resultId = "r1",
 		matches = {
@@ -152,7 +176,7 @@ T["conceal() converts UTF-16 positions to byte columns for extmarks"] = function
 	local buf = H.scratch_buf()
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "あい`x`" })
 
-	require("kakehashi.extra").conceal({ client = client, bufnr = buf })
+	require("kakehashi.extra").conceal.toggle({ client = client, bufnr = buf })
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
 
 	H.eq({ { row = 0, col = 6, end_row = 0, end_col = 7, conceal = "" } }, get_conceal_marks(buf))
