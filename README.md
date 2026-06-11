@@ -196,6 +196,21 @@ Passing the whole selection matters: a selection spanning out of a JSX
 element into the surrounding function is not contained by the `jsx_element`
 capture, so the javascript `// %s` wins instead.
 
+To stop calling `get()` by hand, `watch()` keeps the buffer-local
+'commentstring' option itself in sync with the cursor: cursor movement and
+buffer entry asynchronously run the same request and apply the answer, and
+outside every capture the option returns to what it was before the watcher
+touched the buffer. Built-in commenting (`gc`) reads the option, so it
+becomes context-aware with just:
+
+```lua
+require("kakehashi.extra.commentstring").watch()
+```
+
+Like `captures.watch()`, a nil `bufnr` follows every buffer the client is
+attached to, repeated calls with the same parameters (client, buffer,
+injection) reuse the live autocmd, and `vim.api.nvim_del_autocmd()` stops it.
+
 ### Lazily setup bridged language servers by inheriting `vim.lsp.config`.
 
 ```lua
