@@ -222,13 +222,16 @@ reuse-by-parameters semantics are `captures.watch()`'s own.
 
 Integrations stay in your config — for example a
 [Comment.nvim](https://github.com/numToStr/Comment.nvim) `pre_hook`
-replacing nvim-ts-context-commentstring (returning nil defers to
-Comment.nvim's own tables, e.g. for buffers without a kakehashi client):
+replacing nvim-ts-context-commentstring. Comment.nvim only falls back to
+`vim.treesitter` (a client-side parse) when the `pre_hook` returns nil, so a
+total hook — kakehashi first, then Comment.nvim's plain filetype table, then
+the 'commentstring' option — keeps commenting entirely server-driven:
 
 ```lua
 require("Comment").setup({
   mappings = false,
   pre_hook = function(ctx)
+    local blockwise = ctx.ctype == require("Comment.utils").ctype.blockwise
     local ok, commentstring = pcall(function()
       local bufnr = vim.api.nvim_get_current_buf()
       -- consult the commented rows, excluding indentation and trailing
@@ -248,14 +251,14 @@ require("Comment").setup({
         },
       })
     end)
-    if not ok or not commentstring then
-      return nil
-    end
     -- blockwise needs a closing side ("{/* %s */}" has one, "-- %s" not)
-    if ctx.ctype == require("Comment.utils").ctype.blockwise and not commentstring:find("%%s%s*%S") then
-      return nil
+    if ok and commentstring and (not blockwise or commentstring:find("%%s%s*%S")) then
+      return commentstring
     end
-    return commentstring
+    -- the fallbacks live here in the hook: ft.get is a plain table lookup
+    return require("Comment.ft").get(vim.bo.filetype, ctx.ctype)
+      or (not blockwise and vim.bo.commentstring)
+      or error(vim.bo.filetype .. " doesn't support block comments!")
   end,
 })
 ```
