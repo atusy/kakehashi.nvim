@@ -336,8 +336,10 @@ require("kakehashi.extra.endwise").get({opts})
 
     The closing keyword (`end`, `fi`, `endif`, ...) the construct at the
     position still needs, or nil when everything is closed.
-    The support can be extended by providing your own `endwise.scm` queries.
-    |kakehashi-queries|).
+    Bundled queries cover bash, cmake, elixir, erlang, fish, fortran, julia,
+    liquid, lua, luau, matlab, pascal, ruby, systemverilog, vim, and zsh.
+    The support can be extended by providing your own `endwise.scm` queries
+    (|kakehashi-queries|).
 
     Fields of {opts}:
       {position}    (lsp.Position?) defaults to the closest non-blank at or
