@@ -141,7 +141,11 @@ function M.watch(opts)
 	local client = opts.client or util.get_client(bufnr)
 	local text_document = { uri = vim.uri_from_bufnr(bufnr) }
 
+	---@type KakehashiCapturesResult? latest full result, the delta lineage
+	local latest
+
 	local function publish(result)
+		latest = result
 		vim.api.nvim_exec_autocmds("User", {
 			pattern = "KakehashiCapturesUpdate",
 			data = { kind = opts.kind, injection = opts.injection, bufnr = bufnr, result = result },
@@ -160,6 +164,29 @@ function M.watch(opts)
 		end, bufnr)
 	end
 
+	---@param previous KakehashiCapturesResult
+	local function request_delta(previous)
+		-- no injection param: the lineage (previousResultId) identifies the mode
+		client:request("kakehashi/captures/full/delta", {
+			textDocument = text_document,
+			kind = opts.kind,
+			previousResultId = previous.resultId,
+		}, function(err, result)
+			if err then
+				return
+			end
+			result = util.denil(result)
+			if result and result.edits ~= nil then
+				result = {
+					resultId = result.resultId,
+					matches = apply_edits(previous.matches, result.edits),
+					skipped = previous.skipped,
+				}
+			end
+			publish(result)
+		end, bufnr)
+	end
+
 	return vim.api.nvim_create_autocmd("LspRequest", {
 		callback = function(ev)
 			if ev.data.client_id ~= client.id then
@@ -171,6 +198,12 @@ function M.watch(opts)
 			end
 			if request.method == "textDocument/semanticTokens/full" then
 				request_full()
+			elseif request.method == "textDocument/semanticTokens/full/delta" then
+				if latest then
+					request_delta(latest)
+				else
+					request_full()
+				end
 			end
 		end,
 	})
