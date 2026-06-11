@@ -66,6 +66,29 @@ local function delta_params(text_document, kind, previous)
 	return { textDocument = text_document, kind = kind, previousResultId = previous.resultId }
 end
 
+---@param a lsp.Position
+---@param b lsp.Position
+---@return boolean a is at or before b
+local function pos_le(a, b)
+	return a.line < b.line or (a.line == b.line and a.character <= b.character)
+end
+
+---Matches with at least one capture touching the range — the same scoping a
+---`kakehashi/captures/range` response applies server-side.
+---@param matches KakehashiMatch[]
+---@param range lsp.Range
+---@return KakehashiMatch[]
+local function matches_touching(matches, range)
+	return vim.tbl_filter(function(match)
+		for _, capture in ipairs(match.captures) do
+			if pos_le(capture.range.start, range["end"]) and pos_le(range.start, capture.range["end"]) then
+				return true
+			end
+		end
+		return false
+	end, matches)
+end
+
 ---Interpret a non-null `kakehashi/captures/full/delta` response: splice the
 ---edits over the previous full result, or pass a full answer through as-is.
 ---@param previous KakehashiCapturesResult
@@ -136,7 +159,10 @@ end
 ---
 ---- default: `kakehashi/captures/full`
 ---- with `range`: `kakehashi/captures/range`, scoped to the viewport
----  (the result carries no resultId — there is no delta over viewports)
+---  (the result carries no resultId — there is no delta over viewports).
+---  On a watched buffer the server is asked for one delta instead and the
+---  merged result is filtered to the range in memory, which is faster than
+---  a fresh range traversal; the shape of the answer is the same.
 ---- with `previousResult`: `kakehashi/captures/full/delta`; delta edits are
 ---  merged over the previous matches so the caller always receives a new
 ---  full result. A stale lineage (null delta) transparently falls back to a
@@ -174,15 +200,6 @@ function M.get(opts)
 		return util.denil(response and response.result)
 	end
 
-	if opts.range then
-		return request("kakehashi/captures/range", {
-			textDocument = text_document,
-			kind = opts.kind,
-			range = opts.range,
-			injection = opts.injection,
-		})
-	end
-
 	local watcher = find_watcher(client.id, bufnr, opts.kind, opts.injection)
 
 	---Pass a full result through while keeping the watcher's lineage current,
@@ -200,18 +217,42 @@ function M.get(opts)
 		return keep(request("kakehashi/captures/full", full_params(text_document, opts.kind, opts.injection)))
 	end
 
+	---@param previous KakehashiCapturesResult
+	---@return KakehashiCapturesResult | nil
+	local function request_delta(previous)
+		local result = request("kakehashi/captures/full/delta", delta_params(text_document, opts.kind, previous))
+		if not result then
+			-- lineage lost (stale id, ambiguous mode, or server restart):
+			-- the spec says to call full again
+			return request_full()
+		end
+		return keep(resolve_delta(previous, result))
+	end
+
+	if opts.range then
+		local previous = watcher and watcher.latest[bufnr]
+		if not previous then
+			return request("kakehashi/captures/range", {
+				textDocument = text_document,
+				kind = opts.kind,
+				range = opts.range,
+				injection = opts.injection,
+			})
+		end
+		-- a watched buffer answers faster from one delta merged in memory
+		-- than from a fresh range traversal — and moves the lineage forward
+		local merged = request_delta(previous)
+		if not merged then
+			return nil
+		end
+		return { matches = matches_touching(merged.matches, opts.range), skipped = merged.skipped }
+	end
+
 	local previous = opts.previousResult or (watcher and watcher.latest[bufnr]) or nil
 	if not previous then
 		return request_full()
 	end
-
-	local result = request("kakehashi/captures/full/delta", delta_params(text_document, opts.kind, previous))
-	if not result then
-		-- lineage lost (stale id, ambiguous mode, or server restart):
-		-- the spec says to call full again
-		return request_full()
-	end
-	return keep(resolve_delta(previous, result))
+	return request_delta(previous)
 end
 
 ---Keep captures up to date by piggybacking on the editor's semantic tokens

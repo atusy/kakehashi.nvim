@@ -61,7 +61,9 @@ end
 
 Pass `range` instead to scope the query to a viewport
 (`kakehashi/captures/range`; range results carry no `resultId`, so they
-cannot seed the delta loop):
+cannot seed the delta loop). When a live watcher observes the buffer, the
+range answer is derived from one cheap delta filtered in memory instead of
+a fresh range traversal — same shape, fewer server cycles:
 
 ```lua
 local visible = captures.get({
