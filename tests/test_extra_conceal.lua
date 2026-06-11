@@ -67,4 +67,53 @@ T["conceal() watches highlights and conceals captures carrying conceal metadata"
 	}, get_conceal_marks(buf))
 end
 
+T["conceal() replaces marks on update and clears them on a null result"] = function()
+	local responses = {
+		{
+			resultId = "r1",
+			matches = {
+				{
+					patternIndex = 0,
+					language = "markdown",
+					captures = { capture("a", range(0, 0, 0, 1), { conceal = "" }) },
+				},
+			},
+			skipped = {},
+		},
+		{
+			resultId = "r2",
+			matches = {
+				{
+					patternIndex = 0,
+					language = "markdown",
+					captures = { capture("b", range(1, 0, 1, 2), { conceal = "•" }) },
+				},
+			},
+			skipped = {},
+		},
+		vim.NIL, -- e.g. the only language layer lost its highlights query
+	}
+	local turn = 0
+	local client = H.fake_client({
+		["kakehashi/captures/full"] = function()
+			turn = turn + 1
+			return responses[turn]
+		end,
+	})
+	local buf = H.scratch_buf()
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "`x`", "abcdefghij" })
+	local pending_full = { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" }
+
+	require("kakehashi.extra").conceal({ client = client, bufnr = buf })
+
+	H.fire_lsp_request(client, pending_full)
+	H.eq({ { row = 0, col = 0, end_row = 0, end_col = 1, conceal = "" } }, get_conceal_marks(buf))
+
+	H.fire_lsp_request(client, pending_full)
+	H.eq({ { row = 1, col = 0, end_row = 1, end_col = 2, conceal = "•" } }, get_conceal_marks(buf))
+
+	H.fire_lsp_request(client, pending_full)
+	H.eq({}, get_conceal_marks(buf))
+end
+
 return T
