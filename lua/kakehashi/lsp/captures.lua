@@ -229,6 +229,15 @@ function M.watch(opts)
 	local key = watcher_key(client.id, opts.bufnr, opts.kind, opts.injection)
 	local existing = watchers[key]
 	if existing and autocmd_alive(existing.autocmd) then
+		-- Replay the cached results: a subscriber created after the watcher
+		-- (e.g. a re-enabled conceal applier) would otherwise wait for the
+		-- next edit before hearing anything.
+		for bufnr, result in pairs(existing.latest) do
+			vim.api.nvim_exec_autocmds("User", {
+				pattern = "KakehashiCapturesUpdate",
+				data = { kind = opts.kind, injection = opts.injection, bufnr = bufnr, result = result },
+			})
+		end
 		return existing.autocmd
 	end
 
@@ -295,6 +304,18 @@ function M.watch(opts)
 		end,
 	})
 	watchers[key] = { autocmd = autocmd, latest = latest }
+
+	-- Seed the buffers already visible: their semantic tokens were requested
+	-- when they attached, before this watcher existed, so without an initial
+	-- fetch nothing would be published until the next edit.
+	if opts.bufnr then
+		request_full(opts.bufnr)
+	else
+		for bufnr in pairs(client.attached_buffers or {}) do
+			request_full(bufnr)
+		end
+	end
+
 	return autocmd
 end
 

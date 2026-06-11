@@ -17,8 +17,7 @@ T["get() continues the delta lineage of a watcher observing the target"] = funct
 	local buf = H.scratch_buf()
 	local captures = require("kakehashi.lsp.captures")
 
-	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true })
-	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true }) -- seeds r1
 
 	local result = captures.get({ client = client, bufnr = buf, kind = "context", injection = true })
 
@@ -36,9 +35,8 @@ T["get() hands its fresh result back to the watcher as the new lineage"] = funct
 	local buf = H.scratch_buf()
 	local captures = require("kakehashi.lsp.captures")
 
-	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true })
-	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
-	captures.get({ client = client, bufnr = buf, kind = "context", injection = true })
+	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true }) -- seeds r1
+	captures.get({ client = client, bufnr = buf, kind = "context", injection = true }) -- delta to r2
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full/delta" })
 
 	H.eq(3, #client.calls)
@@ -54,7 +52,8 @@ T["get() seeds the lineage of a watcher that has no result yet"] = function()
 	local buf = H.scratch_buf()
 	local captures = require("kakehashi.lsp.captures")
 
-	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true })
+	-- an all-buffer watcher cannot seed buffers it cannot see
+	captures.watch({ client = client, kind = "context", injection = true })
 	captures.get({ client = client, bufnr = buf, kind = "context", injection = true })
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full/delta" })
 
@@ -90,8 +89,7 @@ T["get() ignores watchers with different parameters or a range request"] = funct
 	local buf = H.scratch_buf()
 	local captures = require("kakehashi.lsp.captures")
 
-	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true })
-	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true }) -- seeds r1
 
 	-- different kind and different injection mode each miss the watcher
 	captures.get({ client = client, bufnr = buf, kind = "fold", injection = true })

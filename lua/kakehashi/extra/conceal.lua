@@ -95,13 +95,6 @@ function M.toggle(opts)
 		return false
 	end
 
-	require("kakehashi.lsp.captures").watch({
-		kind = "highlights",
-		client = client,
-		bufnr = opts.bufnr,
-		injection = injection,
-	})
-
 	local marked = {}
 	local applier = vim.api.nvim_create_autocmd("User", {
 		pattern = "KakehashiCapturesUpdate",
@@ -117,6 +110,14 @@ function M.toggle(opts)
 		end,
 	})
 	appliers[key] = { autocmd = applier, marked = marked }
+
+	-- after the applier, so it hears the watcher's seed or replay right away
+	require("kakehashi.lsp.captures").watch({
+		kind = "highlights",
+		client = client,
+		bufnr = opts.bufnr,
+		injection = injection,
+	})
 	return true
 end
 

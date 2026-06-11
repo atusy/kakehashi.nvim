@@ -101,9 +101,16 @@ above follows every buffer the client serves, tracking each buffer's delta
 lineage independently (`ev.data.bufnr` tells updates apart). Pass `bufnr` to
 pin the watcher to a single buffer.
 
+A fresh watcher seeds itself immediately: buffers it can already see (the
+pinned `bufnr`, or every attached buffer) get one `captures/full` on
+creation, because their semantic tokens were requested before the watcher
+existed and nothing else would be published until the next edit.
+
 `watch()` returns the watching autocmd id. Calling it again with the same
 parameters (client, buffer, kind, injection) returns the existing autocmd
-while it is alive, so it is safe to call from repeated setup paths; delete
+while it is alive — and replays the cached results so a subscriber created
+after the watcher (e.g. a re-enabled `conceal.toggle()`) hears the current
+state right away. It is safe to call from repeated setup paths; delete
 the autocmd with `vim.api.nvim_del_autocmd()` to stop watching.
 
 `get()` cooperates with a live watcher observing the same target (client,

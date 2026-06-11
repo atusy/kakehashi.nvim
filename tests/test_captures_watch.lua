@@ -6,6 +6,38 @@ local function full_result(result_id)
 	return { resultId = result_id or "r1", matches = {}, skipped = {} }
 end
 
+T["watch() seeds the pinned buffer immediately instead of waiting for an edit"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local buf = H.scratch_buf()
+
+	require("kakehashi.lsp.captures").watch({
+		client = client,
+		bufnr = buf,
+		kind = "context",
+		injection = true,
+	})
+
+	H.eq(1, #client.calls, "semantic tokens for this buffer were requested before the watcher existed")
+	H.eq("kakehashi/captures/full", client.calls[1].method)
+	H.eq({
+		textDocument = { uri = vim.uri_from_bufnr(buf) },
+		kind = "context",
+		injection = true,
+	}, client.calls[1].params)
+	H.eq(buf, client.calls[1].bufnr)
+end
+
+T["watch() without bufnr seeds every buffer the client is attached to"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local buf = H.scratch_buf()
+	client.attached_buffers = { [buf] = true }
+
+	require("kakehashi.lsp.captures").watch({ client = client, kind = "context" })
+
+	H.eq(1, #client.calls)
+	H.eq(vim.uri_from_bufnr(buf), client.calls[1].params.textDocument.uri)
+end
+
 T["watch() requests captures/full when semanticTokens/full goes pending"] = function()
 	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
 	local buf = H.scratch_buf()
@@ -18,14 +50,14 @@ T["watch() requests captures/full when semanticTokens/full goes pending"] = func
 	})
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
 
-	H.eq(1, #client.calls)
-	H.eq("kakehashi/captures/full", client.calls[1].method)
+	H.eq(2, #client.calls) -- the seed on creation, then the mirrored request
+	H.eq("kakehashi/captures/full", client.calls[2].method)
 	H.eq({
 		textDocument = { uri = vim.uri_from_bufnr(buf) },
 		kind = "context",
 		injection = true,
-	}, client.calls[1].params)
-	H.eq(buf, client.calls[1].bufnr)
+	}, client.calls[2].params)
+	H.eq(buf, client.calls[2].bufnr)
 end
 
 T["watch() emits KakehashiCapturesUpdate with the fresh captures as data"] = function()
@@ -49,7 +81,29 @@ T["watch() emits KakehashiCapturesUpdate with the fresh captures as data"] = fun
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
 	vim.api.nvim_del_autocmd(subscription)
 
-	H.eq({ { kind = "context", injection = true, bufnr = buf, result = result } }, events)
+	local update = { kind = "context", injection = true, bufnr = buf, result = result }
+	H.eq({ update, update }, events, "one update from the seed, one from the mirrored request")
+end
+
+T["watch() reuse replays cached results to late subscribers without a request"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result("r1") })
+	local buf = H.scratch_buf()
+	local captures = require("kakehashi.lsp.captures")
+	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true }) -- seeds r1
+
+	local events = {}
+	local subscription = vim.api.nvim_create_autocmd("User", {
+		pattern = "KakehashiCapturesUpdate",
+		callback = function(ev)
+			table.insert(events, ev.data)
+		end,
+	})
+	captures.watch({ client = client, bufnr = buf, kind = "context", injection = true })
+	vim.api.nvim_del_autocmd(subscription)
+
+	H.eq(1, #client.calls, "a replay is served from memory")
+	H.eq(1, #events)
+	H.eq("r1", events[1].result.resultId)
 end
 
 T["watch() mirrors semanticTokens delta with captures/full/delta over the in-memory result"] = function()
@@ -73,7 +127,7 @@ T["watch() mirrors semanticTokens delta with captures/full/delta over the in-mem
 	})
 
 	require("kakehashi.lsp.captures").watch({ client = client, bufnr = buf, kind = "context", injection = true })
-	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+	-- the seed already established the lineage; mirror the delta directly
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full/delta" })
 	vim.api.nvim_del_autocmd(subscription)
 
@@ -105,7 +159,7 @@ T["watch() recovers from a stale lineage (null delta) with a fresh full request"
 	})
 
 	require("kakehashi.lsp.captures").watch({ client = client, bufnr = buf, kind = "context", injection = true })
-	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+	-- the seed established a lineage the server has already forgotten
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full/delta" })
 	vim.api.nvim_del_autocmd(subscription)
 
@@ -120,7 +174,9 @@ T["watch() falls back to captures/full when delta arrives before any result"] = 
 	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
 	local buf = H.scratch_buf()
 
-	require("kakehashi.lsp.captures").watch({ client = client, bufnr = buf, kind = "context" })
+	-- an all-buffer watcher cannot seed buffers it cannot see, so this
+	-- buffer has no lineage when the delta request arrives
+	require("kakehashi.lsp.captures").watch({ client = client, kind = "context" })
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full/delta" })
 
 	H.eq(1, #client.calls)
@@ -136,7 +192,7 @@ T["watch() with the same parameters returns the live autocmd instead of stacking
 	local autocmd = captures.watch(params)
 	H.eq(autocmd, captures.watch(params), "same parameters should reuse the watcher")
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
-	H.eq(1, #client.calls, "a reused watcher must not duplicate requests")
+	H.eq(2, #client.calls, "a reused watcher must not duplicate requests beyond seed and mirror")
 
 	local other = captures.watch({ client = client, bufnr = buf, kind = "fold", injection = true })
 	assert(other ~= autocmd, "different parameters need their own watcher")
@@ -152,13 +208,14 @@ T["watch() ignores other clients, buffers, statuses, and methods"] = function()
 	local semantic_full = "textDocument/semanticTokens/full"
 
 	require("kakehashi.lsp.captures").watch({ client = client, bufnr = buf, kind = "context" })
+	H.eq(1, #client.calls, "only the seed so far")
 	H.fire_lsp_request(other_client, { type = "pending", bufnr = buf, method = semantic_full })
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf + 1, method = semantic_full })
 	H.fire_lsp_request(client, { type = "complete", bufnr = buf, method = semantic_full })
 	H.fire_lsp_request(client, { type = "cancel", bufnr = buf, method = semantic_full })
 	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/hover" })
 
-	H.eq({}, client.calls)
+	H.eq(1, #client.calls, "none of these events concern the watcher")
 	H.eq({}, other_client.calls)
 end
 

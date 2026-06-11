@@ -212,13 +212,6 @@ function M.toggle(opts)
 		return false
 	end
 
-	require("kakehashi.lsp.captures").watch({
-		kind = "context",
-		client = client,
-		bufnr = opts.bufnr,
-		injection = injection,
-	})
-
 	---@type KakehashiContextState
 	local state = { applier = 0, autocmds = {}, latest = {}, floats = {} }
 
@@ -259,6 +252,15 @@ function M.toggle(opts)
 		}),
 	}
 	states[key] = state
+
+	-- after the subscriber, so it hears the watcher's seed or replay right away
+	require("kakehashi.lsp.captures").watch({
+		kind = "context",
+		client = client,
+		bufnr = opts.bufnr,
+		injection = injection,
+	})
+
 	update_current_win()
 	return true
 end

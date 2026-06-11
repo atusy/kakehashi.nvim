@@ -175,8 +175,7 @@ T["a watched get() continues the delta lineage instead of full traversals"] = fu
 	local buf = H.scratch_buf()
 	local commentstring = require("kakehashi.extra.commentstring")
 
-	commentstring.watch({ client = client, bufnr = buf })
-	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+	commentstring.watch({ client = client, bufnr = buf }) -- seeds r1
 	H.eq(1, #client.calls)
 	H.eq("kakehashi/captures/full", client.calls[1].method)
 
