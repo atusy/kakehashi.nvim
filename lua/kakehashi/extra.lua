@@ -45,6 +45,23 @@ local function apply_conceal(bufnr, result, offset_encoding)
 	end
 end
 
+---Live appliers by parameter identity, mirroring captures.watch(): repeated
+---conceal() calls share one subscriber instead of re-deriving marks N times.
+---@type table<string, integer>
+local appliers = {}
+
+---@param autocmd integer
+---@return boolean whether the autocmd has not been deleted
+local function applier_alive(autocmd)
+	local subscribers = vim.api.nvim_get_autocmds({ event = "User", pattern = "KakehashiCapturesUpdate" })
+	for _, au in ipairs(subscribers) do
+		if au.id == autocmd then
+			return true
+		end
+	end
+	return false
+end
+
 ---Conceal text the way `highlights.scm` directs (`#set! conceal`), driven by
 ---the kakehashi server instead of a client-side Tree-sitter parse: a
 ---captures.watch() on kind "highlights" keeps the captures fresh, and every
@@ -66,6 +83,12 @@ function M.conceal(opts)
 		injection = injection,
 	})
 
+	local key = ("%d/%s/%s"):format(client.id, opts.bufnr or "*", tostring(injection))
+	local existing = appliers[key]
+	if existing and applier_alive(existing) then
+		return watcher, existing
+	end
+
 	local applier = vim.api.nvim_create_autocmd("User", {
 		pattern = "KakehashiCapturesUpdate",
 		callback = function(ev)
@@ -78,6 +101,7 @@ function M.conceal(opts)
 			apply_conceal(ev.data.bufnr, ev.data.result, offset_encoding)
 		end,
 	})
+	appliers[key] = applier
 	return watcher, applier
 end
 

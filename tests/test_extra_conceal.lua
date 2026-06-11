@@ -116,4 +116,23 @@ T["conceal() replaces marks on update and clears them on a null result"] = funct
 	H.eq({}, get_conceal_marks(buf))
 end
 
+T["conceal() with the same parameters reuses the live watcher and applier"] = function()
+	local extra = require("kakehashi.extra")
+	local client = H.fake_client({})
+	local buf = H.scratch_buf()
+	local params = { client = client, bufnr = buf }
+
+	local watcher, applier = extra.conceal(params)
+	local watcher2, applier2 = extra.conceal(params)
+	H.eq(watcher, watcher2, "same parameters should reuse the watcher")
+	H.eq(applier, applier2, "same parameters should reuse the applier")
+
+	local _, other_applier = extra.conceal({ client = client })
+	assert(other_applier ~= applier, "different parameters need their own applier")
+
+	vim.api.nvim_del_autocmd(applier)
+	local _, recreated = extra.conceal(params)
+	assert(recreated ~= applier, "a deleted applier should be recreated")
+end
+
 return T
