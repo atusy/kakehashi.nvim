@@ -157,6 +157,28 @@ T["context.toggle() honors max_lines"] = function()
 	toggle({ client = client, bufnr = buf, max_lines = 1 })
 end
 
+T["context floats grow no gutter of their own even when the buffer carries signs"] = function()
+	local client = H.fake_client({
+		["kakehashi/captures/full"] = result_with({
+			context_capture("context", range(0, 0, 29, 3)),
+		}),
+	})
+	local buf = buf_in_current_win()
+	-- a sign on the header line, as gitsigns or diagnostics would add
+	local ns = vim.api.nvim_create_namespace("test.context.signs")
+	vim.api.nvim_buf_set_extmark(buf, ns, 0, 0, { sign_text = "S" })
+	vim.fn.winrestview({ topline = 6, lnum = 12, col = 0 })
+	local toggle = require("kakehashi.extra.context").toggle
+
+	H.eq(true, toggle({ client = client, bufnr = buf }))
+	H.fire_lsp_request(client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+
+	H.eq({ "L1" }, shown_lines())
+	H.eq(0, vim.fn.getwininfo(floats()[1])[1].textoff, "the float text must align with the source window's text")
+
+	toggle({ client = client, bufnr = buf })
+end
+
 T["context.toggle() tracks each parameter set independently"] = function()
 	local toggle = require("kakehashi.extra.context").toggle
 	local client = H.fake_client({})

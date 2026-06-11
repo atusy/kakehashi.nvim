@@ -192,6 +192,14 @@ local function render(state, win, max_lines)
 			vim.wo[float].wrap = false
 			vim.wo[float].foldenable = false
 			vim.wo[float].scrolloff = 0
+			-- the float is already placed past the source window's 'textoff';
+			-- any gutter of its own ('signcolumn' is auto and the real buffer
+			-- carries signs from gitsigns/diagnostics) would shift the text
+			vim.wo[float].signcolumn = "no"
+			vim.wo[float].statuscolumn = ""
+			-- conceal the header like the source window does
+			vim.wo[float].conceallevel = vim.wo[win].conceallevel
+			vim.wo[float].concealcursor = vim.wo[win].concealcursor
 			stack[i] = float
 		end
 		vim.api.nvim_win_call(float, function()
