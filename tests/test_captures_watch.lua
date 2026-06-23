@@ -201,6 +201,68 @@ T["watch() with the same parameters returns the live autocmd instead of stacking
 	assert(captures.watch(params) ~= autocmd, "a deleted watcher should be recreated")
 end
 
+T["watch() self-deletes once its client has stopped"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local other_client = H.fake_client({})
+	local buf = H.scratch_buf()
+
+	local autocmd = require("kakehashi.lsp.captures").watch({ client = client, bufnr = buf, kind = "context" })
+	H.eq(1, #client.calls, "only the seed so far")
+
+	-- the server stopped; the next LspRequest of any client must reap the watcher
+	client.stopped = true
+	H.fire_lsp_request(other_client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+
+	H.eq(1, #client.calls, "a stopped client is never requested again")
+	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "LspRequest" })) do
+		assert(au.id ~= autocmd, "the watcher autocmd should have deleted itself")
+	end
+end
+
+T["watch() tears down a buffer-specific watcher when that buffer detaches"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local buf = H.scratch_buf()
+
+	local autocmd = require("kakehashi.lsp.captures").watch({ client = client, bufnr = buf, kind = "context" })
+	H.fire_lsp_detach(client, buf)
+
+	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "LspRequest" })) do
+		assert(au.id ~= autocmd, "a buffer-specific watcher should be reaped with its buffer")
+	end
+end
+
+T["watch() keeps an all-buffer watcher alive while other buffers stay attached"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local buf1, buf2 = H.scratch_buf(), H.scratch_buf()
+	client.attached_buffers = { [buf1] = true, [buf2] = true }
+
+	local autocmd = require("kakehashi.lsp.captures").watch({ client = client, kind = "context" })
+	-- one buffer leaves; nvim fires LspDetach before dropping buf1, so it is
+	-- still listed — but buf2 remains, so the watcher must keep serving it
+	H.fire_lsp_detach(client, buf1)
+
+	local alive = false
+	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "LspRequest" })) do
+		alive = alive or au.id == autocmd
+	end
+	assert(alive, "the all-buffer watcher must keep serving the remaining buffer")
+end
+
+T["watch() reaps an all-buffer watcher when its client's last buffer detaches"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local buf = H.scratch_buf()
+	client.attached_buffers = { [buf] = true }
+
+	local autocmd = require("kakehashi.lsp.captures").watch({ client = client, kind = "context" })
+	-- buf is still listed when its own LspDetach fires (nvim drops it only
+	-- afterward); the watcher must still recognize it as the client's last
+	H.fire_lsp_detach(client, buf)
+
+	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "LspRequest" })) do
+		assert(au.id ~= autocmd, "an all-buffer watcher should be reaped once its client is empty")
+	end
+end
+
 T["watch() ignores other clients, buffers, statuses, and methods"] = function()
 	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
 	local other_client = H.fake_client({})

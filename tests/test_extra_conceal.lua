@@ -148,6 +148,63 @@ T["conceal.toggle() turns concealing off (clearing marks) and back on"] = functi
 	H.eq(1, #get_conceal_marks(buf))
 end
 
+T["conceal.toggle() clears marks and reaps the applier when its buffer detaches"] = function()
+	local result = {
+		resultId = "r1",
+		matches = {
+			{
+				patternIndex = 0,
+				language = "markdown",
+				captures = { capture("a", range(0, 0, 0, 1), { conceal = "" }) },
+			},
+		},
+		skipped = {},
+	}
+	local client = H.fake_client({ ["kakehashi/captures/full"] = result })
+	local buf = H.scratch_buf()
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "`x`" })
+	local toggle = require("kakehashi.extra.conceal").toggle
+
+	H.eq(true, toggle({ client = client, bufnr = buf }))
+	H.eq(1, #get_conceal_marks(buf), "the seed established the marks")
+
+	H.fire_lsp_detach(client, buf)
+	H.eq({}, get_conceal_marks(buf), "detaching the client must clear its orphaned conceal marks")
+	H.eq(true, toggle({ client = client, bufnr = buf }), "the applier was reaped, so this toggle turns it on afresh")
+end
+
+T["conceal.toggle() clears every marked buffer when a stopping client reaps an all-buffer applier"] = function()
+	local result = {
+		resultId = "r1",
+		matches = {
+			{
+				patternIndex = 0,
+				language = "markdown",
+				captures = { capture("a", range(0, 0, 0, 1), { conceal = "" }) },
+			},
+		},
+		skipped = {},
+	}
+	local client = H.fake_client({ ["kakehashi/captures/full"] = result })
+	local buf1, buf2 = H.scratch_buf(), H.scratch_buf()
+	for _, b in ipairs({ buf1, buf2 }) do
+		vim.api.nvim_buf_set_lines(b, 0, -1, false, { "`x`" })
+	end
+	client.attached_buffers = { [buf1] = true, [buf2] = true }
+
+	require("kakehashi.extra.conceal").toggle({ client = client }) -- all-buffer: seeds both
+	H.eq(1, #get_conceal_marks(buf1))
+	H.eq(1, #get_conceal_marks(buf2))
+
+	-- the server stops; nvim detaches every buffer, but the applier is reaped
+	-- on the first detach — the rest must still have their marks cleared
+	client.stopped = true
+	H.fire_lsp_detach(client, buf1)
+
+	H.eq({}, get_conceal_marks(buf1))
+	H.eq({}, get_conceal_marks(buf2), "a buffer detached after the applier was reaped must not keep frozen marks")
+end
+
 T["conceal.toggle() tracks each parameter set independently"] = function()
 	local toggle = require("kakehashi.extra.conceal").toggle
 	local client = H.fake_client({})

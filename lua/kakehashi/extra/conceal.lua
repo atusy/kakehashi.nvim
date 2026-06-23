@@ -48,11 +48,56 @@ end
 ---@class KakehashiConcealApplier
 ---@field autocmd integer User KakehashiCapturesUpdate subscriber
 ---@field marked table<integer, true> buffers this applier has set marks in
+---@field client vim.lsp.Client the client this applier follows
+---@field bufnr? integer the single buffer it follows, nil for an all-buffer applier
 
 ---Live appliers by parameter identity, mirroring captures.watch(): toggling
 ---flips the one subscriber for those parameters on and off.
 ---@type table<string, KakehashiConcealApplier>
 local appliers = {}
+
+---Clear a buffer's orphaned conceal marks when the client leaves it: no more
+---KakehashiCapturesUpdate events will arrive for it, so the marks would
+---otherwise linger frozen. A buffer-specific applier is reaped with its
+---buffer; an all-buffer one is reaped once its client serves nothing more.
+---@param client_id integer
+---@param bufnr integer
+local function detach(client_id, bufnr)
+	for key, applier in pairs(appliers) do
+		if applier.client.id == client_id then
+			if vim.api.nvim_buf_is_valid(bufnr) then
+				vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
+			end
+			applier.marked[bufnr] = nil
+			if util.reap_on_detach(applier.client, applier.bufnr, bufnr) then
+				-- A stopping client detaches every buffer, but reap fires on the
+				-- first: clear the marks of every other buffer now, or they stay
+				-- frozen once the applier is gone and stops hearing detaches.
+				for marked_bufnr in pairs(applier.marked) do
+					if vim.api.nvim_buf_is_valid(marked_bufnr) then
+						vim.api.nvim_buf_clear_namespace(marked_bufnr, ns, 0, -1)
+					end
+				end
+				pcall(vim.api.nvim_del_autocmd, applier.autocmd)
+				appliers[key] = nil
+			end
+		end
+	end
+end
+
+-- One LspDetach autocmd drives every applier's teardown; installed lazily.
+local detach_installed = false
+local function ensure_detach_handler()
+	if detach_installed then
+		return
+	end
+	detach_installed = true
+	vim.api.nvim_create_autocmd("LspDetach", {
+		callback = function(ev)
+			detach(ev.data.client_id, ev.buf)
+		end,
+	})
+end
 
 ---@param autocmd integer
 ---@return boolean whether the autocmd has not been deleted
@@ -109,7 +154,8 @@ function M.toggle(opts)
 			apply_conceal(ev.data.bufnr, ev.data.result, offset_encoding)
 		end,
 	})
-	appliers[key] = { autocmd = applier, marked = marked }
+	appliers[key] = { autocmd = applier, marked = marked, client = client, bufnr = opts.bufnr }
+	ensure_detach_handler()
 
 	-- after the applier, so it hears the watcher's seed or replay right away
 	require("kakehashi.lsp.captures").watch({

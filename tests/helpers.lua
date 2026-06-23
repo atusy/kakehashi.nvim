@@ -27,6 +27,9 @@ function H.fake_client(responses)
 		handler(nil, resolve(method, params), { method = method, bufnr = bufnr, client_id = self.id })
 		return true, #self.calls
 	end
+	function client:is_stopped()
+		return self.stopped == true
+	end
 	return client
 end
 
@@ -36,6 +39,16 @@ end
 function H.fire_lsp_request(client, request)
 	vim.api.nvim_exec_autocmds("LspRequest", {
 		data = { client_id = client.id, request_id = 1, request = request },
+	})
+end
+
+--- Fire an LspDetach autocmd as Neovim would when a client leaves a buffer.
+---@param client { id: integer } the client detaching
+---@param bufnr integer the buffer it is leaving
+function H.fire_lsp_detach(client, bufnr)
+	vim.api.nvim_exec_autocmds("LspDetach", {
+		buffer = bufnr,
+		data = { client_id = client.id },
 	})
 end
 
