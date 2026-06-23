@@ -42,6 +42,16 @@ function H.fire_lsp_request(client, request)
 	})
 end
 
+--- Fire an LspDetach autocmd as Neovim would when a client leaves a buffer.
+---@param client { id: integer } the client detaching
+---@param bufnr integer the buffer it is leaving
+function H.fire_lsp_detach(client, bufnr)
+	vim.api.nvim_exec_autocmds("LspDetach", {
+		buffer = bufnr,
+		data = { client_id = client.id },
+	})
+end
+
 function H.scratch_buf(name)
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_name(buf, name or (vim.fn.tempname() .. ".md"))

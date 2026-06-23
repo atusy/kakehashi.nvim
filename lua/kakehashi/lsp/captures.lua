@@ -111,11 +111,53 @@ end
 ---@class KakehashiCapturesWatcher
 ---@field autocmd integer the LspRequest autocmd driving the watcher
 ---@field latest table<integer, KakehashiCapturesResult> latest full result per buffer, the delta lineage
+---@field client vim.lsp.Client the client this watcher follows
+---@field bufnr? integer the single buffer it follows, nil for an all-buffer watcher
 
 ---Live watchers by parameter identity, so repeated watch() calls with the
 ---same parameters share one autocmd instead of stacking duplicate requests.
 ---@type table<string, KakehashiCapturesWatcher>
 local watchers = {}
+
+---@param watcher KakehashiCapturesWatcher
+---@param key string its identity in `watchers`
+local function reap_watcher(watcher, key)
+	pcall(vim.api.nvim_del_autocmd, watcher.autocmd)
+	watchers[key] = nil
+end
+
+---Drop a buffer's lineage when the client leaves it, and reap the watcher
+---whose work is done: a buffer-specific one with its buffer, an all-buffer
+---one once its client serves nothing more. This is what reaps the all-buffer
+---watcher in the common single-client case, where the watcher's own
+---self-delete never fires (a stopped client emits no further LspRequests).
+---@param client_id integer
+---@param bufnr integer
+local function detach(client_id, bufnr)
+	for key, watcher in pairs(watchers) do
+		if watcher.client.id == client_id then
+			watcher.latest[bufnr] = nil
+			if util.reap_on_detach(watcher.client, watcher.bufnr, bufnr) then
+				reap_watcher(watcher, key)
+			end
+		end
+	end
+end
+
+-- One LspDetach autocmd drives every watcher's teardown; installed lazily so
+-- merely requiring this module costs nothing.
+local detach_installed = false
+local function ensure_detach_handler()
+	if detach_installed then
+		return
+	end
+	detach_installed = true
+	vim.api.nvim_create_autocmd("LspDetach", {
+		callback = function(ev)
+			detach(ev.data.client_id, ev.buf)
+		end,
+	})
+end
 
 ---@param client_id integer
 ---@param bufnr? integer nil for a watcher following every buffer of the client
@@ -352,7 +394,8 @@ function M.watch(opts)
 			end
 		end,
 	})
-	watchers[key] = { autocmd = autocmd, latest = latest }
+	watchers[key] = { autocmd = autocmd, latest = latest, client = client, bufnr = opts.bufnr }
+	ensure_detach_handler()
 
 	-- Seed the buffers already visible: their semantic tokens were requested
 	-- when they attached, before this watcher existed, so without an initial

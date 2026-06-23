@@ -106,6 +106,8 @@ end
 ---@field autocmds integer[] window-event autocmds driving re-renders
 ---@field latest table<integer, lsp.Range[]> @context ranges per buffer
 ---@field floats table<integer, integer[]> stacked context floats per source window, outermost first
+---@field client vim.lsp.Client the client this state follows
+---@field bufnr? integer the single buffer it follows, nil for an all-buffer state
 
 ---Live states by parameter identity, mirroring extra.conceal: toggling flips
 ---the one applier for those parameters on and off.
@@ -138,6 +140,60 @@ local function close_floats(state, win, from)
 	if not from then
 		state.floats[win] = nil
 	end
+end
+
+---@param state KakehashiContextState
+---@param client_id integer
+---@param bufnr integer
+---@return boolean whether the state should be reaped
+local function state_detach(state, client_id, bufnr)
+	if state.client.id ~= client_id then
+		return false
+	end
+	state.latest[bufnr] = nil
+	-- floats are keyed by source window, and the update handler only re-renders
+	-- the current window — so a detached buffer parked in another window keeps
+	-- stale floats unless they are closed here, explicitly.
+	for win in pairs(state.floats) do
+		if vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == bufnr then
+			close_floats(state, win)
+		end
+	end
+	return util.reap_on_detach(state.client, state.bufnr, bufnr)
+end
+
+---Tear context floats down when the client leaves a buffer; reap a
+---buffer-specific state with its buffer, an all-buffer one once its client
+---serves nothing more.
+---@param client_id integer
+---@param bufnr integer
+local function detach(client_id, bufnr)
+	for key, state in pairs(states) do
+		if state_detach(state, client_id, bufnr) then
+			pcall(vim.api.nvim_del_autocmd, state.applier)
+			for _, autocmd in ipairs(state.autocmds) do
+				pcall(vim.api.nvim_del_autocmd, autocmd)
+			end
+			for win in pairs(state.floats) do
+				close_floats(state, win)
+			end
+			states[key] = nil
+		end
+	end
+end
+
+-- One LspDetach autocmd drives every state's teardown; installed lazily.
+local detach_installed = false
+local function ensure_detach_handler()
+	if detach_installed then
+		return
+	end
+	detach_installed = true
+	vim.api.nvim_create_autocmd("LspDetach", {
+		callback = function(ev)
+			detach(ev.data.client_id, ev.buf)
+		end,
+	})
 end
 
 ---Each header is a single-line float showing the real source buffer,
@@ -237,7 +293,7 @@ function M.toggle(opts)
 	end
 
 	---@type KakehashiContextState
-	local state = { applier = 0, autocmds = {}, latest = {}, floats = {} }
+	local state = { applier = 0, autocmds = {}, latest = {}, floats = {}, client = client, bufnr = opts.bufnr }
 
 	local function update_current_win()
 		local win = vim.api.nvim_get_current_win()
@@ -276,6 +332,7 @@ function M.toggle(opts)
 		}),
 	}
 	states[key] = state
+	ensure_detach_handler()
 
 	-- after the subscriber, so it hears the watcher's seed or replay right away
 	require("kakehashi.lsp.captures").watch({
