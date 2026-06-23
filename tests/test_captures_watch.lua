@@ -201,6 +201,24 @@ T["watch() with the same parameters returns the live autocmd instead of stacking
 	assert(captures.watch(params) ~= autocmd, "a deleted watcher should be recreated")
 end
 
+T["watch() self-deletes once its client has stopped"] = function()
+	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
+	local other_client = H.fake_client({})
+	local buf = H.scratch_buf()
+
+	local autocmd = require("kakehashi.lsp.captures").watch({ client = client, bufnr = buf, kind = "context" })
+	H.eq(1, #client.calls, "only the seed so far")
+
+	-- the server stopped; the next LspRequest of any client must reap the watcher
+	client.stopped = true
+	H.fire_lsp_request(other_client, { type = "pending", bufnr = buf, method = "textDocument/semanticTokens/full" })
+
+	H.eq(1, #client.calls, "a stopped client is never requested again")
+	for _, au in ipairs(vim.api.nvim_get_autocmds({ event = "LspRequest" })) do
+		assert(au.id ~= autocmd, "the watcher autocmd should have deleted itself")
+	end
+end
+
 T["watch() ignores other clients, buffers, statuses, and methods"] = function()
 	local client = H.fake_client({ ["kakehashi/captures/full"] = full_result() })
 	local other_client = H.fake_client({})

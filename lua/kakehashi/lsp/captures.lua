@@ -326,6 +326,14 @@ function M.watch(opts)
 
 	local autocmd = vim.api.nvim_create_autocmd("LspRequest", {
 		callback = function(ev)
+			-- Reap the watcher once its client is gone. Checked before the
+			-- client_id filter on purpose: a stopped client emits no further
+			-- LspRequests of its own, so another client's event is the only
+			-- thing left to drive this. Returning true deletes the autocmd.
+			if client:is_stopped() then
+				watchers[key] = nil
+				return true
+			end
 			if ev.data.client_id ~= client.id then
 				return
 			end

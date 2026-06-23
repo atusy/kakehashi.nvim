@@ -27,6 +27,9 @@ function H.fake_client(responses)
 		handler(nil, resolve(method, params), { method = method, bufnr = bufnr, client_id = self.id })
 		return true, #self.calls
 	end
+	function client:is_stopped()
+		return self.stopped == true
+	end
 	return client
 end
 
