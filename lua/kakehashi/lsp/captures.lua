@@ -307,7 +307,7 @@ end
 ---@return integer autocmd id watching LspRequest
 function M.watch(opts)
 	assert(opts and opts.kind, "opts.kind is required")
-	local client = opts.client or util.get_client(opts.bufnr or vim.api.nvim_get_current_buf())
+	local client = opts.client or util.get_client(opts.bufnr)
 
 	local key = watcher_key(client.id, opts.bufnr, opts.kind, opts.injection)
 	local existing = watchers[key]

@@ -44,7 +44,7 @@ end
 function M.get_client(bufnr)
 	return assert(
 		vim.lsp.get_clients({ bufnr = bufnr, name = "kakehashi" })[1],
-		("no kakehashi client attached to buffer %d"):format(bufnr)
+		("no kakehashi client attached to buffer %d"):format(bufnr or -1)
 	)
 end
 
