@@ -70,6 +70,14 @@ local function detach(client_id, bufnr)
 			end
 			applier.marked[bufnr] = nil
 			if util.reap_on_detach(applier.client, applier.bufnr, bufnr) then
+				-- A stopping client detaches every buffer, but reap fires on the
+				-- first: clear the marks of every other buffer now, or they stay
+				-- frozen once the applier is gone and stops hearing detaches.
+				for marked_bufnr in pairs(applier.marked) do
+					if vim.api.nvim_buf_is_valid(marked_bufnr) then
+						vim.api.nvim_buf_clear_namespace(marked_bufnr, ns, 0, -1)
+					end
+				end
 				pcall(vim.api.nvim_del_autocmd, applier.autocmd)
 				appliers[key] = nil
 			end
